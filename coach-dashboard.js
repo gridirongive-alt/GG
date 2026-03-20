@@ -1,0 +1,569 @@
+const api = window.GridironData;
+const session = api.getSession();
+if (!session || session.role !== "coach") window.location.href = "/index.html";
+
+const teamForm = document.getElementById("team-form");
+const manualPlayerForm = document.getElementById("manual-player-form");
+const rosterBody = document.getElementById("roster-body");
+const processCsvButton = document.getElementById("process-csv");
+const csvUploadInput = document.getElementById("csv-upload");
+const csvPreviewSection = document.getElementById("csv-preview-section");
+const csvPreviewBody = document.getElementById("csv-preview-body");
+const csvAddRowButton = document.getElementById("csv-add-row");
+const csvConfirmSaveButton = document.getElementById("csv-confirm-save");
+const csvProcessingBackdrop = document.getElementById("csv-processing-backdrop");
+const logoutButton = document.getElementById("coach-logout");
+const previewCard = document.getElementById("player-preview-card");
+const previewContent = document.getElementById("player-preview-content");
+
+let state = {
+  mode: "local",
+  coach: null,
+  team: null,
+  players: []
+};
+let csvPreviewRows = [];
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options
+  });
+  const json = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(json.error || "Request failed.");
+  return json;
+}
+
+function setFeedback(id, message, isError = false) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = message;
+  el.classList.toggle("is-error", Boolean(isError));
+}
+
+function showAction(message, isError = false) {
+  if (typeof window.showActionMessage === "function") {
+    window.showActionMessage(message, { isError });
+  }
+}
+
+function showCsvProcessing() {
+  if (csvProcessingBackdrop) csvProcessingBackdrop.hidden = false;
+}
+
+function hideCsvProcessing() {
+  if (csvProcessingBackdrop) csvProcessingBackdrop.hidden = true;
+}
+
+function percentRaised(player) {
+  const goal = Number(player.goalTotal || player.goal_total || 0);
+  const raised = Number(player.raisedTotal || player.raised_total || 0);
+  if (!goal) return 0;
+  return Math.min(100, Math.round((raised / goal) * 100));
+}
+
+function attentionSetupFields() {
+  if (!teamForm || !state.team) return;
+  const locationField = teamForm.teamLocation;
+  const sportField = teamForm.teamSport;
+  const locationValue = String(locationField?.value ?? state.team.location ?? "").trim();
+  const sportValue = String(sportField?.value ?? state.team.sport ?? "").trim().toLowerCase();
+  const needsLocation = !locationValue;
+  const needsSport = !sportValue;
+
+  locationField.classList.toggle("attention-field", needsLocation);
+  sportField.classList.toggle("attention-field", needsSport);
+  if (needsLocation || needsSport) {
+    setFeedback(
+      "team-feedback",
+      "Complete Team Location and Sport setup before managing your full season.",
+      true
+    );
+  }
+}
+
+function updateTeamForm() {
+  if (!teamForm || !state.team) return;
+  teamForm.teamName.value = state.team.name || "";
+  teamForm.teamLocation.value = state.team.location || "";
+  teamForm.teamSport.value = state.team.sport || "";
+  attentionSetupFields();
+}
+
+function parseCsv(text) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!lines.length) return [];
+
+  const rows = lines.map((line) => line.split(",").map((entry) => entry.trim()));
+  const firstRow = rows[0] || [];
+  const normalizedHeader = firstRow.map((entry) => entry.toLowerCase().replace(/[^a-z]/g, ""));
+  const looksLikeHeader = normalizedHeader.some((entry) =>
+    ["firstname", "first", "lastname", "last", "email", "emailaddress"].includes(entry)
+  );
+
+  const findIndex = (candidates) => normalizedHeader.findIndex((entry) => candidates.includes(entry));
+  const firstIndex = findIndex(["firstname", "first", "fname", "givenname"]);
+  const lastIndex = findIndex(["lastname", "last", "lname", "surname", "familyname"]);
+  const emailIndex = findIndex(["email", "emailaddress", "mail"]);
+
+  const startIndex = looksLikeHeader ? 1 : 0;
+  return rows.slice(startIndex).map((cells) => ({
+    firstName: cells[firstIndex >= 0 ? firstIndex : 0] || "",
+    lastName: cells[lastIndex >= 0 ? lastIndex : 1] || "",
+    email: cells[emailIndex >= 0 ? emailIndex : 2] || ""
+  }));
+}
+
+function isValidEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim());
+}
+
+function validateCsvPreviewRows(rows) {
+  const errors = [];
+  rows.forEach((row, idx) => {
+    const line = idx + 1;
+    const first = String(row.firstName || "").trim();
+    const last = String(row.lastName || "").trim();
+    const email = String(row.email || "").trim();
+    if (!first) errors.push(`Row ${line}: First Name is required.`);
+    if (!last) errors.push(`Row ${line}: Last Name is required.`);
+    if (!email) errors.push(`Row ${line}: Email is required.`);
+    else if (!isValidEmail(email)) errors.push(`Row ${line}: Email format is invalid.`);
+  });
+  return errors;
+}
+
+function renderCsvPreview() {
+  if (!csvPreviewSection || !csvPreviewBody) return;
+  csvPreviewBody.innerHTML = "";
+  if (!csvPreviewRows.length) {
+    csvPreviewSection.hidden = true;
+    return;
+  }
+  csvPreviewSection.hidden = false;
+  csvPreviewRows.forEach((row, index) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input type="text" data-preview-field="firstName" data-preview-index="${index}" value="${String(
+        row.firstName || ""
+      ).replace(/"/g, "&quot;")}" /></td>
+      <td><input type="text" data-preview-field="lastName" data-preview-index="${index}" value="${String(
+        row.lastName || ""
+      ).replace(/"/g, "&quot;")}" /></td>
+      <td><input type="email" data-preview-field="email" data-preview-index="${index}" value="${String(
+        row.email || ""
+      ).replace(/"/g, "&quot;")}" /></td>
+      <td><button class="btn btn-danger-ghost btn-small" type="button" data-preview-remove="${index}">Delete</button></td>
+    `;
+    csvPreviewBody.appendChild(tr);
+  });
+}
+
+function renderPreviewLocal(playerId) {
+  const player = api.getPlayerByInternalId(playerId);
+  if (!player || !previewCard || !previewContent || !state.team) return;
+  const fullName = `${player.firstName} ${player.lastName}`.trim();
+  const goal = Number(player.goalTotal || 0);
+  const raised = Number(player.raisedTotal || 0);
+  const pct = percentRaised(player);
+  const visibleEquipment = (player.equipment || []).filter((item) => item.enabled !== false);
+  const equipmentRows = visibleEquipment
+    .map(
+      (item) =>
+        `<li><strong>${item.name}</strong> (${item.category || "General"}) - $${Number(
+          item.raised || 0
+        ).toFixed(2)} raised of $${Number(item.goal || 0).toFixed(2)}</li>`
+    )
+    .join("");
+
+  previewContent.innerHTML = `
+    <div class="preview-grid">
+      <div>
+        <p class="preview-name">${fullName}</p>
+        <p class="subtle-copy">${state.team.name}</p>
+      </div>
+      <div>
+        <p><strong>$${raised.toFixed(2)}</strong> raised of <strong>$${goal.toFixed(2)}</strong> (${pct}%)</p>
+        <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+      </div>
+    </div>
+    <ul class="preview-list">${equipmentRows || "<li>No enabled gear configured yet.</li>"}</ul>
+  `;
+  previewCard.hidden = false;
+}
+
+async function renderPreviewBackend(playerId) {
+  if (!previewCard || !previewContent || !state.team) return;
+  try {
+    const data = await apiRequest(`/api/players/${encodeURIComponent(playerId)}/dashboard`);
+    const player = data.player;
+    const visibleEquipment = (player.equipment || []).filter((item) => Number(item.enabled) === 1);
+    const goal = Number(player.goalTotal || 0);
+    const raised = Number(player.raisedTotal || 0);
+    const pct = goal > 0 ? Math.round((raised / goal) * 100) : 0;
+    const equipmentRows = visibleEquipment
+      .map(
+        (item) =>
+          `<li><strong>${item.name}</strong> (${item.category || "General"}) - $${Number(
+            item.raised || 0
+          ).toFixed(2)} raised of $${Number(item.goal || 0).toFixed(2)}</li>`
+      )
+      .join("");
+
+    previewContent.innerHTML = `
+      <div class="preview-grid">
+        <div>
+          <p class="preview-name">${player.first_name} ${player.last_name}</p>
+          <p class="subtle-copy">${state.team.name}</p>
+        </div>
+        <div>
+          <p><strong>$${raised.toFixed(2)}</strong> raised of <strong>$${goal.toFixed(2)}</strong> (${pct}%)</p>
+          <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
+        </div>
+      </div>
+      <ul class="preview-list">${equipmentRows || "<li>No enabled gear configured yet.</li>"}</ul>
+    `;
+    previewCard.hidden = false;
+  } catch {
+    setFeedback("team-feedback", "Unable to load player preview from backend.", true);
+  }
+}
+
+function renderRoster() {
+  if (!rosterBody) return;
+  const players = state.players || [];
+  rosterBody.innerHTML = "";
+  if (!players.length) {
+    rosterBody.innerHTML = '<tr><td colspan="7" class="subtle-copy">No players yet. Add one above.</td></tr>';
+    return;
+  }
+
+  players.forEach((player) => {
+    const isBackend = state.mode === "backend";
+    const id = isBackend ? player.id : player.id;
+    const firstName = isBackend ? player.first_name : player.firstName;
+    const lastName = isBackend ? player.last_name : player.lastName;
+    const email = isBackend ? player.email : player.email;
+    const publicId = isBackend ? player.player_public_id : player.playerId;
+    const registered = isBackend ? Number(player.registered) === 1 : Boolean(player.registered);
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><button class="table-name-link" type="button" data-preview="${id}">${firstName}</button></td>
+      <td><button class="table-name-link" type="button" data-preview="${id}">${lastName}</button></td>
+      <td>${email}</td>
+      <td>${publicId}</td>
+      <td><span class="${registered ? "status-yes" : "status-no"}">${registered ? "✓" : "✕"}</span></td>
+      <td>${percentRaised(player)}%</td>
+      <td class="action-row">
+        <button class="btn btn-ghost btn-small" data-preview="${id}">View</button>
+        <button class="btn btn-danger-ghost btn-small" data-remove="${id}">Remove</button>
+      </td>
+    `;
+    rosterBody.appendChild(tr);
+  });
+}
+
+async function loadBackendDashboard() {
+  if (!session.backendId) throw new Error("No backend coach session");
+  const data = await apiRequest(`/api/coaches/${encodeURIComponent(session.backendId)}/dashboard`);
+  state = {
+    mode: "backend",
+    coach: data.coach,
+    team: data.team,
+    players: data.players || []
+  };
+}
+
+function loadLocalDashboard() {
+  const bundle = api.getCoachWithTeam(session.id);
+  if (!bundle || !bundle.team) throw new Error("Local coach data not found.");
+  state = {
+    mode: "local",
+    coach: bundle.coach,
+    team: bundle.team,
+    players: api.playersForTeam(bundle.team.id)
+  };
+}
+
+async function loadDashboard() {
+  if (session.backendId) {
+    try {
+      await loadBackendDashboard();
+      return;
+    } catch {
+      // fallback below
+    }
+  }
+  loadLocalDashboard();
+}
+
+teamForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const chosenSport = String(teamForm.teamSport.value || "").trim().toLowerCase();
+  if (!chosenSport) {
+    setFeedback("team-feedback", "Please select a sport before saving.", true);
+    teamForm.teamSport.classList.add("attention-field");
+    return;
+  }
+  try {
+    if (state.mode === "backend") {
+      await apiRequest(`/api/teams/${encodeURIComponent(state.team.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: teamForm.teamName.value,
+          location: teamForm.teamLocation.value,
+          sport: chosenSport
+        })
+      });
+      await loadBackendDashboard();
+    } else {
+      api.updateTeam(state.team.id, {
+        name: teamForm.teamName.value,
+        location: teamForm.teamLocation.value,
+        sport: chosenSport
+      });
+      loadLocalDashboard();
+    }
+    setFeedback("team-feedback", "Team profile saved.");
+    showAction("Team profile saved.");
+    updateTeamForm();
+    renderRoster();
+  } catch (error) {
+    setFeedback("team-feedback", error.message || "Could not save team profile.", true);
+    showAction(error.message || "Could not save team profile.", true);
+  }
+});
+
+teamForm?.teamSport?.addEventListener("change", () => {
+  attentionSetupFields();
+});
+
+teamForm?.teamLocation?.addEventListener("input", () => {
+  attentionSetupFields();
+});
+
+manualPlayerForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    if (state.mode === "backend") {
+      const result = await apiRequest("/api/players/upsert", {
+        method: "POST",
+        body: JSON.stringify({
+          teamId: state.team.id,
+          firstName: manualPlayerForm.firstName.value,
+          lastName: manualPlayerForm.lastName.value,
+          email: manualPlayerForm.email.value
+        })
+      });
+      await loadBackendDashboard();
+      if (result.created && result.inviteSent) {
+        const message = `Player added. Invite email sent with PlayerID ${result.playerPublicId}.`;
+        setFeedback("manual-feedback", message);
+        showAction(message);
+      } else if (result.created && !result.inviteSent) {
+        const message = `Player added, but invite email failed. ${
+          result.inviteError || "Check email configuration."
+        } PlayerID: ${result.playerPublicId}`;
+        setFeedback("manual-feedback", message, true);
+        showAction(message, true);
+      } else {
+        const message = "Player already existed; roster entry updated.";
+        setFeedback("manual-feedback", message);
+        showAction(message);
+      }
+    } else {
+      api.upsertPlayerByEmail({
+        teamId: state.team.id,
+        firstName: manualPlayerForm.firstName.value,
+        lastName: manualPlayerForm.lastName.value,
+        email: manualPlayerForm.email.value
+      });
+      loadLocalDashboard();
+      const message = "Player added to roster.";
+      setFeedback("manual-feedback", message);
+      showAction(message);
+    }
+    manualPlayerForm.reset();
+    renderRoster();
+  } catch (error) {
+    setFeedback("manual-feedback", error.message || "Could not add player.", true);
+    showAction(error.message || "Could not add player.", true);
+  }
+});
+
+processCsvButton?.addEventListener("click", async () => {
+  const file = csvUploadInput?.files?.[0];
+  if (!file) {
+    setFeedback("csv-feedback", "Select a CSV file first.", true);
+    showAction("Select a CSV file first.", true);
+    return;
+  }
+  try {
+    showCsvProcessing();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const rows = parseCsv(await file.text()).map((row) => ({
+      firstName: String(row.firstName || "").trim(),
+      lastName: String(row.lastName || "").trim(),
+      email: String(row.email || "").trim()
+    }));
+    const nonEmptyRows = rows.filter((row) => row.firstName || row.lastName || row.email);
+    const errors = validateCsvPreviewRows(nonEmptyRows);
+    csvPreviewRows = nonEmptyRows;
+    renderCsvPreview();
+    hideCsvProcessing();
+    if (errors.length) {
+      const message = `CSV has ${errors.length} issue(s). Please edit preview rows before saving.`;
+      setFeedback("csv-feedback", message, true);
+      showAction(`${message}\n${errors.slice(0, 5).join("\n")}`, true);
+      return;
+    }
+    const message = `Roster preview ready with ${csvPreviewRows.length} row(s). Review and click Confirm & Save Roster.`;
+    setFeedback("csv-feedback", message);
+    showAction(message);
+  } catch (error) {
+    hideCsvProcessing();
+    setFeedback("csv-feedback", error.message || "CSV processing failed.", true);
+    showAction(error.message || "CSV processing failed.", true);
+  }
+});
+
+csvPreviewBody?.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const field = target.dataset.previewField;
+  const index = Number(target.dataset.previewIndex);
+  if (!field || Number.isNaN(index) || !csvPreviewRows[index]) return;
+  csvPreviewRows[index][field] = target.value;
+});
+
+csvPreviewBody?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const removeIndex = target.dataset.previewRemove;
+  if (removeIndex === undefined) return;
+  csvPreviewRows.splice(Number(removeIndex), 1);
+  renderCsvPreview();
+});
+
+csvAddRowButton?.addEventListener("click", () => {
+  csvPreviewRows.push({ firstName: "", lastName: "", email: "" });
+  renderCsvPreview();
+});
+
+csvConfirmSaveButton?.addEventListener("click", async () => {
+  if (!csvPreviewRows.length) {
+    showAction("No preview rows to save.", true);
+    return;
+  }
+  const rows = csvPreviewRows.map((row) => ({
+    firstName: String(row.firstName || "").trim(),
+    lastName: String(row.lastName || "").trim(),
+    email: String(row.email || "").trim().toLowerCase()
+  }));
+  const errors = validateCsvPreviewRows(rows);
+  if (errors.length) {
+    showAction(`Please fix CSV preview errors before saving.\n${errors.slice(0, 5).join("\n")}`, true);
+    return;
+  }
+  try {
+    showCsvProcessing();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    let count = 0;
+    let createdCount = 0;
+    let emailedCount = 0;
+    let emailFailedCount = 0;
+    for (const row of rows) {
+      if (state.mode === "backend") {
+        const result = await apiRequest("/api/players/upsert", {
+          method: "POST",
+          body: JSON.stringify({
+            teamId: state.team.id,
+            firstName: row.firstName,
+            lastName: row.lastName,
+            email: row.email
+          })
+        });
+        if (result.created) {
+          createdCount += 1;
+          if (result.inviteSent) emailedCount += 1;
+          else emailFailedCount += 1;
+        }
+      } else {
+        api.upsertPlayerByEmail({
+          teamId: state.team.id,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          email: row.email
+        });
+      }
+      count += 1;
+    }
+    if (state.mode === "backend") {
+      await loadBackendDashboard();
+      const message = `Roster saved. Processed ${count}. New: ${createdCount}. Invite emails sent: ${emailedCount}. Failed: ${emailFailedCount}.`;
+      setFeedback("csv-feedback", message, emailFailedCount > 0);
+      showAction(message, emailFailedCount > 0);
+    } else {
+      loadLocalDashboard();
+      const message = `Roster saved with ${count} player record(s).`;
+      setFeedback("csv-feedback", message);
+      showAction(message);
+    }
+    csvPreviewRows = [];
+    renderCsvPreview();
+    renderRoster();
+  } catch (error) {
+    setFeedback("csv-feedback", error.message || "Could not save roster.", true);
+    showAction(error.message || "Could not save roster.", true);
+  } finally {
+    hideCsvProcessing();
+  }
+});
+
+rosterBody?.addEventListener("click", async (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const removeId = target.dataset.remove;
+  const previewId = target.dataset.preview;
+
+  if (removeId) {
+    try {
+      if (state.mode === "backend") {
+        await apiRequest(`/api/players/${encodeURIComponent(removeId)}`, { method: "DELETE" });
+        await loadBackendDashboard();
+      } else {
+        api.removePlayer(removeId);
+        loadLocalDashboard();
+      }
+      renderRoster();
+      showAction("Player removed from roster.");
+    } catch (error) {
+      setFeedback("team-feedback", error.message || "Could not remove player.", true);
+      showAction(error.message || "Could not remove player.", true);
+    }
+    return;
+  }
+  if (previewId) {
+    if (state.mode === "backend") await renderPreviewBackend(previewId);
+    else renderPreviewLocal(previewId);
+  }
+});
+
+logoutButton?.addEventListener("click", () => {
+  api.clearSession();
+  window.location.href = "/index.html";
+});
+
+(async () => {
+  try {
+    await loadDashboard();
+    updateTeamForm();
+    renderRoster();
+  } catch {
+    window.location.href = "/index.html";
+  }
+})();

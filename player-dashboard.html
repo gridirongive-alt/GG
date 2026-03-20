@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Player Dashboard | Gridiron Give</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="logo" href="/index.html" aria-label="Gridiron Give home">
+        <span class="logo-mark">
+          <img
+            class="logo-image"
+            src="./assets/GG blue.png"
+            alt="Gridiron Give logo"
+            onerror="this.remove()"
+          />
+          GG
+        </span>
+        <span class="logo-text">Gridiron Give</span>
+      </a>
+      <nav class="header-actions">
+        <button class="btn btn-primary" type="button" id="publish-toggle">Publish</button>
+      </nav>
+    </header>
+
+    <main class="dashboard-main">
+      <section class="card player-top">
+        <div class="player-top-main">
+          <h1 class="dashboard-title" id="player-name-heading">Player Dashboard</h1>
+          <p class="dashboard-copy" id="player-team-copy"></p>
+        </div>
+        <div class="player-top-center">
+        <button class="btn btn-money-soft" type="button" id="setup-payouts">Set Up Payouts</button>
+        </div>
+        <div class="stats-row" id="player-stats"></div>
+      </section>
+
+      <section class="player-workspace section-top-gap">
+        <aside class="player-left-rail">
+          <article class="card">
+            <h2 class="section-title">Player Image</h2>
+            <img id="player-image-preview" class="player-image player-image-tall" alt="Player portrait" />
+            <input type="file" id="player-image-input" accept="image/*" class="section-top-gap-sm" />
+          </article>
+        </aside>
+
+        <section class="player-right-panel">
+          <article class="card">
+            <h2 class="section-title">Equipment Goals</h2>
+            <p class="subtle-copy" id="sport-copy"></p>
+            <form id="equipment-form">
+              <div id="equipment-list" class="equipment-grid"></div>
+              <div class="equipment-actions section-top-gap-sm">
+                <button class="btn btn-soft" type="button" id="add-equipment">+ Add Equipment</button>
+                <button class="btn btn-money" type="submit">Save Gear Goals</button>
+              </div>
+            </form>
+            <p class="form-feedback" id="equipment-feedback"></p>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="player-modal-backdrop" hidden>
+      <section
+        class="modal"
+        id="confirm-save-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-save-title"
+        hidden
+      >
+        <div class="modal-header">
+          <h2 id="confirm-save-title">Confirm Changes</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-player-modal-close>
+            &times;
+          </button>
+        </div>
+        <p class="subtle-copy">Review your updates before saving:</p>
+        <ul id="save-changes-list" class="changes-list"></ul>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" type="button" data-player-modal-close>Cancel</button>
+          <button class="btn btn-money" type="button" id="confirm-save-button">Confirm Changes</button>
+        </div>
+      </section>
+
+      <section
+        class="modal"
+        id="updates-made-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="updates-made-title"
+        hidden
+      >
+        <div class="modal-header">
+          <h2 id="updates-made-title">Updates Made</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-player-modal-close>
+            &times;
+          </button>
+        </div>
+        <p class="subtle-copy">Your dashboard changes were saved successfully.</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" type="button" data-player-modal-close>Close</button>
+        </div>
+      </section>
+    </div>
+
+    <script src="./data.js"></script>
+    <script src="./action-modal.js"></script>
+    <script src="./header-session.js"></script>
+    <script src="./player-dashboard.js"></script>
+  </body>
+</html>

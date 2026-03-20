@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gridiron Give</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body class="home-page">
+    <div class="bg-shape bg-shape-a" aria-hidden="true"></div>
+    <div class="bg-shape bg-shape-b" aria-hidden="true"></div>
+    <section class="intro-overlay" id="intro-overlay" aria-label="Welcome intro">
+      <div class="intro-card">
+        <img src="./assets/GG blue.png" alt="Gridiron Give logo" class="intro-logo" />
+        <h2>Gridiron Give</h2>
+        <div class="intro-spinner" aria-hidden="true"></div>
+      </div>
+    </section>
+
+    <header class="site-header">
+      <a class="logo" href="#" aria-label="Gridiron Give home">
+        <span class="logo-mark">
+          <img
+            class="logo-image"
+            src="./assets/GG blue.png"
+            alt="Gridiron Give logo"
+            onerror="this.remove()"
+          />
+          GG
+        </span>
+        <span class="logo-text">Gridiron Give</span>
+      </a>
+      <nav class="header-actions" aria-label="Primary">
+        <button class="btn btn-ghost" type="button" data-open-modal="get-started-modal" data-auth-guest>
+          Get Started
+        </button>
+        <button class="btn btn-primary" type="button" data-open-modal="sign-in-modal" data-auth-guest>
+          Sign In
+        </button>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <p class="eyebrow">Youth Sports Giving</p>
+        <h1 id="hero-title">Support Athlete Gear Goals</h1>
+        <p class="hero-copy">
+          Find a player or team and donate directly to the gear they need.
+        </p>
+        <p class="donor-direction">
+          Tip: player search is fastest. Team search helps you browse full rosters.
+        </p>
+
+        <form class="search-panel" action="#" method="get" novalidate>
+          <div class="search-field">
+            <label for="player-search">Search Athletes</label>
+            <input
+              id="player-search"
+              name="player"
+              type="search"
+              placeholder="Search by athlete name"
+              autocomplete="off"
+            />
+            <ul id="player-suggestions" class="suggestions" hidden></ul>
+          </div>
+
+          <div class="search-field">
+            <label for="team-search">Search Teams</label>
+            <input
+              id="team-search"
+              name="team"
+              type="search"
+              placeholder="Search by team name"
+              autocomplete="off"
+            />
+            <ul id="team-suggestions" class="suggestions" hidden></ul>
+          </div>
+        </form>
+
+        <section class="featured-player-card section-top-gap-sm" id="featured-player-card" hidden>
+          <p class="eyebrow">Featured Player</p>
+          <h2 id="featured-player-name">Player Name</h2>
+          <p class="subtle-copy" id="featured-player-team">Team • Sport</p>
+          <div class="progress-track section-top-gap-sm">
+            <div class="progress-fill" id="featured-player-progress-fill"></div>
+          </div>
+          <p class="subtle-copy section-top-gap-sm" id="featured-player-progress-copy">0% of goal reached</p>
+          <a class="btn btn-money section-top-gap-sm" id="featured-player-link" href="/index.html">View Profile</a>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="modal-backdrop" hidden>
+      <section class="modal" id="get-started-modal" role="dialog" aria-modal="true" aria-labelledby="get-started-title" hidden>
+        <div class="modal-header">
+          <h2 id="get-started-title">Welcome to Gridiron Give</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          Gridiron Give helps teams organize athlete equipment fundraising in one place.
+          Donors can find players and fund specific gear items, while team managers and players
+          keep profiles and goals up to date.
+        </p>
+        <div class="welcome-overview-grid">
+          <article class="welcome-overview-card">
+            <h3>Team Manager</h3>
+            <p>Set up your team, upload roster, and track player registration and fundraising progress.</p>
+          </article>
+          <article class="welcome-overview-card">
+            <h3>Player</h3>
+            <p>Use your PlayerID, configure your gear list and goals, then publish for donor support.</p>
+          </article>
+        </div>
+        <div class="modal-actions section-top-gap-sm">
+          <button class="btn btn-primary" type="button" id="start-coach-signup">
+            Start Team Manager Setup
+          </button>
+          <button class="btn btn-money" type="button" id="start-player-signup">
+            Have A PlayerID? Start Player Setup
+          </button>
+        </div>
+      </section>
+
+      <section class="modal" id="create-account-modal" role="dialog" aria-modal="true" aria-labelledby="create-account-title" hidden>
+        <div class="modal-header">
+          <h2 id="create-account-title">Create an Account</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+
+        <div class="tablist" role="tablist" aria-label="Choose account type">
+          <button class="tab is-active" type="button" role="tab" data-tab-target="coach-signup">Coach Sign Up</button>
+          <button class="tab" type="button" role="tab" data-tab-target="player-signup">Player Sign Up</button>
+        </div>
+
+        <div class="tab-panel is-active" id="coach-signup" role="tabpanel">
+          <form class="modal-form" id="coach-signup-form">
+            <label>
+              Name
+              <input type="text" name="coachName" required />
+            </label>
+            <label>
+              Email
+              <input type="email" name="coachEmail" required />
+            </label>
+            <label>
+              Password
+              <input type="password" name="coachPassword" required />
+            </label>
+            <label>
+              Confirm Password
+              <input type="password" name="coachPasswordConfirm" required />
+            </label>
+            <label>
+              Team Name
+              <input type="text" name="teamName" required />
+            </label>
+            <label class="policy-check">
+              <input type="checkbox" name="coachPolicyConsent" required />
+              I agree to the
+              <button class="inline-link" type="button" data-open-modal="terms-modal">Terms of Service</button>
+              and
+              <button class="inline-link" type="button" data-open-modal="privacy-modal">Privacy Policy</button>.
+            </label>
+            <button class="btn btn-primary btn-block" type="submit">Create Coach Account</button>
+          </form>
+          <p class="form-feedback" id="coach-signup-feedback" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="tab-panel" id="player-signup" role="tabpanel" hidden>
+          <form class="modal-form" id="player-signup-form">
+            <label>
+              PlayerID
+              <input type="text" name="playerId" id="player-id-input" required />
+            </label>
+            <label>
+              Email (Auto-Filled)
+              <input
+                type="email"
+                name="playerEmail"
+                id="player-email-input"
+                placeholder="Auto-filled after PlayerID lookup"
+                readonly
+              />
+            </label>
+            <label>
+              Password
+              <input type="password" name="playerPassword" required />
+            </label>
+            <label>
+              Confirm Password
+              <input type="password" name="playerPasswordConfirm" required />
+            </label>
+            <label class="policy-check">
+              <input type="checkbox" name="playerPolicyConsent" required />
+              I agree to the
+              <button class="inline-link" type="button" data-open-modal="terms-modal">Terms of Service</button>
+              and
+              <button class="inline-link" type="button" data-open-modal="privacy-modal">Privacy Policy</button>.
+            </label>
+            <button class="btn btn-primary btn-block" type="submit">Create Player Account</button>
+          </form>
+          <p class="form-feedback" id="player-signup-feedback" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="modal" id="sign-in-modal" role="dialog" aria-modal="true" aria-labelledby="sign-in-title" hidden>
+        <div class="modal-header">
+          <h2 id="sign-in-title">Sign In</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+
+        <div class="tablist" role="tablist" aria-label="Choose sign-in type">
+          <button class="tab is-active" type="button" role="tab" data-tab-target="coach-signin">Coach Sign In</button>
+          <button class="tab" type="button" role="tab" data-tab-target="player-signin">Player Sign In</button>
+        </div>
+
+        <div class="tab-panel is-active" id="coach-signin" role="tabpanel">
+          <form class="modal-form" id="coach-signin-form">
+            <label>
+              Email
+              <input type="email" name="coachLoginEmail" required />
+            </label>
+            <label>
+              Password
+              <input type="password" name="coachLoginPassword" required />
+            </label>
+            <button class="btn btn-ghost" type="button" id="coach-forgot-password">
+              Forgot Password
+            </button>
+            <button class="btn btn-primary btn-block" type="submit">Sign In as Coach</button>
+          </form>
+          <p class="form-feedback" id="coach-signin-feedback" role="status" aria-live="polite"></p>
+        </div>
+
+        <div class="tab-panel" id="player-signin" role="tabpanel" hidden>
+          <form class="modal-form" id="player-signin-form">
+            <label>
+              Email
+              <input type="email" name="playerLoginEmail" required />
+            </label>
+            <label>
+              Password
+              <input type="password" name="playerLoginPassword" required />
+            </label>
+            <button class="btn btn-ghost" type="button" id="player-forgot-password">
+              Forgot Password
+            </button>
+            <button class="btn btn-primary btn-block" type="submit">Sign In as Player</button>
+          </form>
+          <p class="form-feedback" id="player-signin-feedback" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section class="modal" id="forgot-password-modal" role="dialog" aria-modal="true" aria-labelledby="forgot-password-title" hidden>
+        <div class="modal-header">
+          <h2 id="forgot-password-title">Forgot Password</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <form id="forgot-password-form" class="modal-form">
+          <label>
+            Account Type
+            <select name="role">
+              <option value="player">Player</option>
+              <option value="coach">Coach</option>
+            </select>
+          </label>
+          <label>
+            Email
+            <input type="email" name="email" required />
+          </label>
+          <button class="btn btn-primary btn-block" type="submit">Send Recovery Email</button>
+        </form>
+        <p class="form-feedback" id="forgot-password-feedback" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="modal" id="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title" hidden>
+        <div class="modal-header">
+          <h2 id="about-title">About Gridiron Give</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          Gridiron Give connects donors with athletes who are raising funds for sport-specific equipment.
+          Coaches manage rosters, players set up goal items, and donors can support exact needs in one place.
+        </p>
+      </section>
+
+      <section class="modal" id="terms-modal" role="dialog" aria-modal="true" aria-labelledby="terms-title" hidden>
+        <div class="modal-header">
+          <h2 id="terms-title">Terms of Service</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          By using Gridiron Give, users agree to provide accurate information, respect platform rules, and use funds
+          for intended equipment purposes. Donations are voluntary, and account misuse may result in access removal.
+        </p>
+      </section>
+
+      <section class="modal" id="privacy-modal" role="dialog" aria-modal="true" aria-labelledby="privacy-title" hidden>
+        <div class="modal-header">
+          <h2 id="privacy-title">Privacy Policy</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          Gridiron Give stores account and donation information to operate the platform. Contact and profile data are
+          used for core functionality such as account setup, notifications, and donation records.
+        </p>
+      </section>
+
+      <section class="modal" id="contact-modal" role="dialog" aria-modal="true" aria-labelledby="contact-title" hidden>
+        <div class="modal-header">
+          <h2 id="contact-title">Contact Us</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          All messages are read and responded to within 1-5 days of receipt.
+        </p>
+        <form id="contact-form" class="modal-form">
+          <label>
+            Name
+            <input type="text" name="name" required />
+          </label>
+          <label>
+            Email
+            <input type="email" name="email" required />
+          </label>
+          <label>
+            Message
+            <textarea name="message" rows="4" required></textarea>
+          </label>
+          <button class="btn btn-primary btn-block" type="submit">Send Message</button>
+        </form>
+        <p class="form-feedback" id="contact-feedback" role="status" aria-live="polite"></p>
+      </section>
+    </div>
+
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <button class="footer-link" type="button" data-open-modal="about-modal">About</button>
+        <button class="footer-link" type="button" data-open-modal="terms-modal">Terms of Service</button>
+        <button class="footer-link" type="button" data-open-modal="privacy-modal">Privacy Policy</button>
+        <button class="footer-link" type="button" data-open-modal="contact-modal">Contact Us</button>
+      </div>
+    </footer>
+
+    <script src="./data.js"></script>
+    <script src="./action-modal.js"></script>
+    <script src="./password-toggle.js"></script>
+    <script src="./header-session.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

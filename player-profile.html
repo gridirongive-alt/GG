@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Player Profile | Gridiron Give</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="logo" href="/index.html" aria-label="Gridiron Give home">
+        <span class="logo-mark">
+          <img
+            class="logo-image"
+            src="./assets/GG blue.png"
+            alt="Gridiron Give logo"
+            onerror="this.remove()"
+          />
+          GG
+        </span>
+        <span class="logo-text">Gridiron Give</span>
+      </a>
+      <nav class="header-actions">
+        <a class="btn btn-ghost" href="/index.html">Back to Search</a>
+      </nav>
+    </header>
+
+    <main class="dashboard-main">
+      <section class="card player-top">
+        <div class="player-top-main">
+          <p class="eyebrow">Donor View</p>
+          <h1 class="dashboard-title" id="donor-name-heading">Player Profile</h1>
+          <p class="dashboard-copy" id="donor-team-copy"></p>
+        </div>
+        <div class="player-top-center">
+          <button class="btn btn-money-soft" type="button" id="jump-to-donate">Make a Donation</button>
+        </div>
+        <div class="stats-row" id="donor-stats"></div>
+      </section>
+
+      <section class="player-workspace section-top-gap">
+        <aside class="player-left-rail">
+          <article class="card">
+            <h2 class="section-title">Athlete</h2>
+            <img id="donor-player-image" class="player-image player-image-tall" alt="Athlete profile photo" />
+            <p class="subtle-copy section-top-gap-sm" id="donor-player-team"></p>
+          </article>
+        </aside>
+
+        <section class="player-right-panel">
+          <article class="card" id="donate-panel">
+            <h2 class="section-title">Equipment Fundraising</h2>
+            <p id="donation-help" class="subtle-copy">Click any equipment item to donate.</p>
+            <p id="donation-feedback" class="form-feedback"></p>
+            <div id="donor-equipment-grid" class="equipment-grid section-top-gap-sm"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="donor-modal-backdrop" hidden>
+      <section
+        class="modal"
+        id="donation-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="donation-modal-title"
+        hidden
+      >
+        <div class="modal-header">
+          <h2 id="donation-modal-title">Make a Donation</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-donor-modal-close>
+            &times;
+          </button>
+        </div>
+        <form id="donation-form" class="stack-form donation-form section-top-gap-sm">
+          <p class="subtle-copy" id="selected-equipment-copy"></p>
+          <div class="donation-top-row">
+            <label>
+              Donation Amount ($)
+              <input type="number" min="1" step="1" name="amount" required />
+            </label>
+            <button class="btn btn-money-soft" type="button" id="fill-remaining">
+              Donate Remaining
+            </button>
+          </div>
+          <div class="donation-donor-grid">
+            <label>
+              Your Name
+              <input type="text" name="donorName" required />
+            </label>
+            <label>
+              Your Email
+              <input type="email" name="donorEmail" required />
+            </label>
+          </div>
+          <label>
+            Message (Optional)
+            <textarea name="donorMessage" rows="3"></textarea>
+          </label>
+          <div class="donation-footer">
+            <label class="toggle-label">
+              <input type="checkbox" name="anonymous" />
+              Donate anonymously
+            </label>
+            <button class="btn btn-money" type="submit">Confirm Donation</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
+    <script src="./data.js"></script>
+    <script src="./action-modal.js"></script>
+    <script src="./header-session.js"></script>
+    <script src="./player-profile.js"></script>
+  </body>
+</html>

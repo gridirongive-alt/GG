@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Coach Dashboard | Gridiron Give</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="logo" href="/index.html" aria-label="Gridiron Give home">
+        <span class="logo-mark">
+          <img
+            class="logo-image"
+            src="./assets/GG blue.png"
+            alt="Gridiron Give logo"
+            onerror="this.remove()"
+          />
+          GG
+        </span>
+        <span class="logo-text">Gridiron Give</span>
+      </a>
+      <nav class="header-actions">
+      </nav>
+    </header>
+
+    <main class="dashboard-main">
+      <section class="dashboard-grid coach-stack">
+        <article class="card">
+          <h1 class="dashboard-title">Manager Dashboard</h1>
+          <p class="dashboard-copy">Update your team profile and manage your athlete roster.</p>
+
+          <details class="coach-collapsible">
+            <summary class="coach-collapsible-summary">
+              <span class="section-title">Team Profile Setup</span>
+              <span class="coach-collapsible-arrow" aria-hidden="true">▾</span>
+            </summary>
+
+            <div class="coach-collapsible-content">
+              <form id="team-form" class="stack-form">
+                <label>
+                  Team Name
+                  <input type="text" name="teamName" required />
+                </label>
+                <label>
+                  Team Location
+                  <input type="text" name="teamLocation" placeholder="City, State" />
+                </label>
+                <label>
+                  Sport
+                  <select name="teamSport">
+                    <option value="">Select sport</option>
+                    <option value="football">Football</option>
+                    <option value="hockey">Hockey</option>
+                    <option value="lacrosse">Lacrosse</option>
+                    <option value="baseball">Baseball</option>
+                  </select>
+                </label>
+                <button class="btn btn-primary" type="submit">Save Team Profile</button>
+              </form>
+              <p class="form-feedback" id="team-feedback"></p>
+            </div>
+          </details>
+        </article>
+
+        <article class="card">
+          <h2 class="section-title">Roster Upload</h2>
+          <p class="subtle-copy">Upload, preview, edit, then confirm save to notify players.</p>
+          <details class="coach-collapsible">
+            <summary class="coach-collapsible-summary">
+              <span class="section-title">Add Players To Roster</span>
+              <span class="coach-collapsible-arrow" aria-hidden="true">▾</span>
+            </summary>
+
+            <div class="coach-collapsible-content">
+              <h2 class="section-title">Add Player Manually</h2>
+              <form id="manual-player-form" class="stack-form">
+                <label>
+                  First Name
+                  <input type="text" name="firstName" required />
+                </label>
+                <label>
+                  Last Name
+                  <input type="text" name="lastName" required />
+                </label>
+                <label>
+                  Email
+                  <input type="email" name="email" required />
+                </label>
+                <button class="btn btn-primary" type="submit">Add Player</button>
+              </form>
+              <p class="form-feedback" id="manual-feedback"></p>
+
+              <h3 class="section-title section-top-gap">Bulk Upload Roster (CSV)</h3>
+              <p class="subtle-copy">Required columns: First Name, Last Name, Email</p>
+              <input type="file" id="csv-upload" accept=".csv" />
+              <button class="btn btn-ghost section-top-gap-sm" type="button" id="process-csv">Process CSV</button>
+              <p class="form-feedback" id="csv-feedback"></p>
+
+              <section class="section-top-gap" id="csv-preview-section" hidden>
+                <h3 class="section-title">CSV Preview</h3>
+                <p class="subtle-copy">Review and edit rows before saving to roster.</p>
+                <div class="table-wrap section-top-gap-sm">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>First Name</th>
+                        <th>Last Name</th>
+                        <th>Email</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody id="csv-preview-body"></tbody>
+                  </table>
+                </div>
+                <div class="equipment-actions section-top-gap-sm">
+                  <button class="btn btn-soft" type="button" id="csv-add-row">Add Row</button>
+                  <button class="btn btn-money" type="button" id="csv-confirm-save">Confirm & Save Roster</button>
+                </div>
+              </section>
+            </div>
+          </details>
+        </article>
+      </section>
+
+      <section class="card section-top-gap">
+        <h2 class="section-title">Roster</h2>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>First Name</th>
+                <th>Last Name</th>
+                <th>Email</th>
+                <th>PlayerID</th>
+                <th>Registered</th>
+                <th>% Raised</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="roster-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card section-top-gap" id="player-preview-card" hidden>
+        <h2 class="section-title">Player Preview (Donor View)</h2>
+        <div id="player-preview-content"></div>
+      </section>
+    </main>
+
+    <div class="modal-backdrop" id="csv-processing-backdrop" hidden>
+      <section class="modal action-message-modal" role="dialog" aria-modal="true" aria-labelledby="csv-processing-title">
+        <div class="modal-header">
+          <h2 id="csv-processing-title">Roster Configuration In Process</h2>
+        </div>
+        <p class="subtle-copy">Please wait while we prepare and validate your roster data.</p>
+        <div class="intro-spinner section-top-gap-sm" aria-hidden="true"></div>
+      </section>
+    </div>
+
+    <script src="./data.js"></script>
+    <script src="./action-modal.js"></script>
+    <script src="./header-session.js"></script>
+    <script src="./coach-dashboard.js"></script>
+  </body>
+</html>
