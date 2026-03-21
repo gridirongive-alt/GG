@@ -178,58 +178,7 @@ function writeData(data) {
 }
 
 function bootstrapDemoData() {
-  const data = readData();
-  if (data.coaches.length || data.players.length || data.teams.length) return;
-
-  const teamId = `team-${randomPart(6)}`;
-  const coachId = `coach-${randomPart(6)}`;
-  const coach = {
-    id: coachId,
-    name: "Coach Carter",
-    email: "coach@northview.org",
-    password: "password123",
-    teamId,
-  };
-  const team = {
-    id: teamId,
-    coachId,
-    name: "Northview Panthers",
-    location: "Albany, NY",
-    sport: "football",
-  };
-
-  const demoPlayers = [
-    ["Jordan", "Reed", "jordan@example.com", 120, 420],
-    ["Tyler", "Shaw", "tyler@example.com", 80, 300],
-    ["Evan", "Brooks", "evan@example.com", 40, 350],
-  ].map(([firstName, lastName, email, raisedTotal, goalTotal]) => {
-    const playerId = generatePlayerId(data);
-    data.emailToPlayerId[normalizeEmail(email)] = playerId;
-    return {
-      id: `player-${randomPart(6)}`,
-      teamId,
-      firstName,
-      lastName,
-      email,
-      playerId,
-      password: "",
-      registered: false,
-      imageDataUrl: "",
-      raisedTotal,
-      goalTotal,
-      published: false,
-      equipment: gearForSport(team.sport).map((item, index) => ({
-        ...item,
-        goal: index === 0 ? 150 : 50,
-        raised: index === 0 ? 60 : 15,
-      })),
-    };
-  });
-
-  data.coaches.push(coach);
-  data.teams.push(team);
-  data.players.push(...demoPlayers);
-  writeData(data);
+  return readData();
 }
 
 function createCoachAccount({ name, email, password, teamName }) {
