@@ -3,6 +3,7 @@ api.bootstrapDemoData();
 
 const params = new URLSearchParams(window.location.search);
 const publicPlayerId = params.get("playerId");
+const checkoutStatus = params.get("checkout");
 
 const donorNameHeading = document.getElementById("donor-name-heading");
 const donorTeamCopy = document.getElementById("donor-team-copy");
@@ -18,6 +19,8 @@ const selectedEquipmentCopy = document.getElementById("selected-equipment-copy")
 const fillRemainingButton = document.getElementById("fill-remaining");
 const jumpToDonateButton = document.getElementById("jump-to-donate");
 const topGeneralDonateButton = document.getElementById("top-general-donate");
+const coverFeesCheckbox = document.getElementById("cover-fees-checkbox");
+const confirmDonationButton = document.getElementById("confirm-donation-button");
 const donatePanel = document.getElementById("donate-panel");
 const donorModalBackdrop = document.getElementById("donor-modal-backdrop");
 const donationModal = document.getElementById("donation-modal");
@@ -30,6 +33,7 @@ let state = {
 };
 let selectedDonationMode = "equipment";
 let selectedIndex = null;
+let stripeConfig = null;
 
 function showAction(message, isError = false) {
   if (typeof window.showActionMessage === "function") {
@@ -76,6 +80,7 @@ function normalizeBackendPlayer(row) {
     firstName: row.first_name,
     lastName: row.last_name,
     imageDataUrl: row.image_data_url || "",
+    stripeAccountId: String(row.stripe_account_id || ""),
     goalTotal: Number(row.goalTotal || 0),
     raisedTotal: Number(row.raisedTotal || 0),
     equipment: (row.equipment || []).map((item) => ({
@@ -151,6 +156,55 @@ function totalRemaining(current) {
   );
 }
 
+function centsToDollars(cents) {
+  return Number(cents || 0) / 100;
+}
+
+function dollarsToCents(dollars) {
+  return Math.round(Number(dollars || 0) * 100);
+}
+
+function computeCheckoutAmounts(dollars, coverFees) {
+  const baseCents = dollarsToCents(dollars);
+  if (!baseCents) {
+    return {
+      athleteAmountCents: 0,
+      checkoutTotalCents: 0,
+      coverFees: Boolean(coverFees),
+    };
+  }
+  if (!coverFees) {
+    return {
+      athleteAmountCents: baseCents,
+      checkoutTotalCents: baseCents,
+      coverFees: false,
+    };
+  }
+  return {
+    athleteAmountCents: baseCents,
+    checkoutTotalCents: Math.round(baseCents / 0.95),
+    coverFees: true,
+  };
+}
+
+function updateDonationButtonText() {
+  if (!donationForm || !confirmDonationButton) return;
+  const enteredAmount = Number(donationForm.amount.value || 0);
+  const coverFees = coverFeesCheckbox?.checked === true;
+  if (!enteredAmount || enteredAmount <= 0) {
+    confirmDonationButton.textContent = "Donate";
+    return;
+  }
+  const totals = computeCheckoutAmounts(enteredAmount, coverFees);
+  confirmDonationButton.textContent = `Donate ${money(centsToDollars(totals.checkoutTotalCents))}`;
+}
+
+async function ensureStripeConfig() {
+  if (stripeConfig) return stripeConfig;
+  stripeConfig = await apiRequest("/api/stripe/config");
+  return stripeConfig;
+}
+
 function renderGeneralDonationCard() {
   const current = currentPlayer();
   if (!current || !generalDonationCard) return;
@@ -222,7 +276,10 @@ function openDonationForm(equipmentIndex) {
   selectedEquipmentCopy.textContent = `Selected: ${item.name} • Remaining ${money(remaining)}`;
   donationHelp.textContent = `Selected ${item.name}. Complete your donation in the popup modal.`;
   donationForm.amount.value = remaining > 0 ? Math.min(remaining, 25) : 0;
+  if (coverFeesCheckbox) coverFeesCheckbox.checked = false;
   donationFeedback.textContent = "";
+  donationFeedback.classList.remove("is-error");
+  updateDonationButtonText();
   openDonationModal();
 }
 
@@ -236,7 +293,10 @@ function openGeneralDonationForm() {
   donationHelp.textContent =
     "General donations automatically fill the highest remaining equipment goals first.";
   donationForm.amount.value = remaining > 0 ? Math.min(remaining, 50) : 0;
+  if (coverFeesCheckbox) coverFeesCheckbox.checked = false;
   donationFeedback.textContent = "";
+  donationFeedback.classList.remove("is-error");
+  updateDonationButtonText();
   openDonationModal();
 }
 
@@ -258,6 +318,40 @@ async function submitDonation(formData) {
   }
 
   if (mode === "backend") {
+    if (current.stripeAccountId) {
+      const config = await ensureStripeConfig();
+      if (!config?.configured) {
+        throw new Error("Stripe checkout is not configured yet.");
+      }
+      const coverFees = Boolean(formData.get("coverFees"));
+      const checkout = computeCheckoutAmounts(donationAmount, coverFees);
+      const response = await apiRequest("/create-checkout-session", {
+        method: "POST",
+        body: JSON.stringify({
+          stripe_account_id: current.stripeAccountId,
+          amount: checkout.athleteAmountCents,
+          coverFees,
+          playerId: current.id,
+          publicPlayerId,
+          donationType: selectedDonationMode,
+          equipmentItemId:
+            selectedDonationMode === "equipment" ? current.equipment[selectedIndex]?.id || null : null,
+          donorName: formData.get("donorName"),
+          donorEmail: formData.get("donorEmail"),
+          donorMessage: formData.get("donorMessage"),
+          anonymous: Boolean(formData.get("anonymous")),
+        }),
+      });
+      if (!response?.url) {
+        throw new Error("Stripe checkout did not return a redirect URL.");
+      }
+      return {
+        redirectUrl: response.url,
+        amount: centsToDollars(response.totalAmount || checkout.checkoutTotalCents),
+        externalCheckout: true,
+      };
+    }
+
     return apiRequest("/api/donations", {
       method: "POST",
       body: JSON.stringify({
@@ -325,13 +419,21 @@ fillRemainingButton?.addEventListener("click", () => {
               Number(current.equipment[selectedIndex]?.raised || 0)
           );
   donationForm.amount.value = remaining;
+  updateDonationButtonText();
 });
+
+donationForm?.amount?.addEventListener("input", updateDonationButtonText);
+coverFeesCheckbox?.addEventListener("change", updateDonationButtonText);
 
 donationForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
     const formData = new FormData(donationForm);
     const donation = await submitDonation(formData);
+    if (donation?.externalCheckout && donation.redirectUrl) {
+      window.location.assign(donation.redirectUrl);
+      return;
+    }
     donationFeedback.textContent = `Donation confirmed (${money(
       donation.amount
     )}). Receipt and player-notification emails will send once Stripe/email integration is enabled.`;
@@ -381,6 +483,11 @@ document.addEventListener("keydown", (event) => {
     renderProfileInfo();
     renderGeneralDonationCard();
     renderEquipment();
+    if (checkoutStatus === "success") {
+      showAction("Stripe checkout submitted. Donation totals update after payment confirmation.");
+    } else if (checkoutStatus === "cancelled") {
+      showAction("Stripe checkout was cancelled.", true);
+    }
   } catch {
     window.location.href = "/index.html";
   }

@@ -22,6 +22,9 @@ const publishToggle = document.getElementById("publish-toggle");
 const playerImageInput = document.getElementById("player-image-input");
 const playerImagePreview = document.getElementById("player-image-preview");
 const payoutsButton = document.getElementById("setup-payouts");
+const stripeOnboardingPanel = document.getElementById("stripe-onboarding-panel");
+const stripeOnboardingContainer = document.getElementById("stripe-onboarding-container");
+const closeStripeOnboardingButton = document.getElementById("close-stripe-onboarding");
 const logoutButton = document.getElementById("player-logout");
 const addEquipmentButton = document.getElementById("add-equipment");
 const playerModalBackdrop = document.getElementById("player-modal-backdrop");
@@ -33,6 +36,8 @@ const playerModalCloseButtons = [...document.querySelectorAll("[data-player-moda
 
 let draftEquipment = [];
 let pendingSave = null;
+let stripeConfig = null;
+let stripeConnectInstance = null;
 
 function showAction(message, isError = false) {
   if (typeof window.showActionMessage === "function") {
@@ -73,6 +78,8 @@ function normalizeBackendPlayer(player) {
     registered: Number(player.registered) === 1,
     imageDataUrl: player.image_data_url || "",
     published: Number(player.published) === 1,
+    stripeAccountId: String(player.stripe_account_id || ""),
+    stripeOnboardingComplete: Number(player.stripe_onboarding_complete) === 1,
     goalTotal: Number(player.goalTotal || 0),
     raisedTotal: Number(player.raisedTotal || 0),
     equipment,
@@ -263,6 +270,15 @@ function renderPublishButton(p) {
   publishToggle.classList.toggle("btn-primary", !p.published);
 }
 
+function renderPayoutButton(p) {
+  if (!payoutsButton) return;
+  const complete = Boolean(p?.stripeOnboardingComplete);
+  payoutsButton.textContent = complete ? "Payment Setup Complete" : "Set Up Payments";
+  payoutsButton.disabled = complete;
+  payoutsButton.classList.toggle("btn-money-soft", !complete);
+  payoutsButton.classList.toggle("btn-soft", complete);
+}
+
 function renderImage(p) {
   if (!playerImagePreview) return;
   if (p.imageDataUrl) {
@@ -338,9 +354,82 @@ function render() {
   teamCopy.textContent = state.team?.name || "";
   renderStats(current);
   renderPublishButton(current);
+  renderPayoutButton(current);
   renderImage(current);
   if (!draftEquipment.length) draftEquipment = cloneEquipment(current.equipment);
   renderEquipment();
+}
+
+async function ensureStripeConfig() {
+  if (stripeConfig) return stripeConfig;
+  stripeConfig = await apiRequest("/api/stripe/config");
+  return stripeConfig;
+}
+
+async function refreshStripeStatus() {
+  const current = refreshPlayer();
+  if (!current || mode !== "backend" || !current.id) return;
+  if (!current.stripeAccountId) return;
+  try {
+    const status = await apiRequest("/api/stripe/player-status", {
+      method: "POST",
+      body: JSON.stringify({ playerId: current.id }),
+    });
+    current.stripeAccountId = String(status.stripe_account_id || current.stripeAccountId || "");
+    current.stripeOnboardingComplete = Boolean(status.onboarding_complete);
+    renderPayoutButton(current);
+  } catch {}
+}
+
+function closeStripeOnboardingPanel() {
+  if (stripeOnboardingPanel) stripeOnboardingPanel.hidden = true;
+  if (stripeOnboardingContainer) stripeOnboardingContainer.innerHTML = "";
+  stripeConnectInstance = null;
+}
+
+async function mountEmbeddedOnboarding() {
+  const current = refreshPlayer();
+  if (!current) throw new Error("Player session is missing.");
+  const config = await ensureStripeConfig();
+  if (!config?.configured || !config?.publishableKey) {
+    throw new Error("Stripe publishable key is not configured.");
+  }
+  if (!window.StripeConnect?.loadConnectAndInitialize) {
+    throw new Error("Stripe embedded onboarding failed to load.");
+  }
+
+  const fetchClientSecret = async () => {
+    const response = await apiRequest("/create-account-session", {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: current.id,
+        stripe_account_id: current.stripeAccountId || "",
+      }),
+    });
+    if (response?.stripe_account_id) {
+      current.stripeAccountId = String(response.stripe_account_id);
+    }
+    return response.client_secret;
+  };
+
+  stripeConnectInstance = window.StripeConnect.loadConnectAndInitialize({
+    publishableKey: config.publishableKey,
+    fetchClientSecret,
+  });
+
+  if (!stripeOnboardingContainer || !stripeOnboardingPanel) {
+    throw new Error("Stripe onboarding container is missing.");
+  }
+  stripeOnboardingContainer.innerHTML = "";
+  stripeOnboardingPanel.hidden = false;
+
+  const onboarding = stripeConnectInstance.create("account-onboarding");
+  onboarding.setOnExit(async () => {
+    await refreshStripeStatus();
+    closeStripeOnboardingPanel();
+  });
+  stripeOnboardingContainer.appendChild(onboarding);
+  stripeOnboardingPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 equipmentList?.addEventListener("input", (event) => {
@@ -459,26 +548,14 @@ playerImageInput?.addEventListener("change", async () => {
 });
 
 payoutsButton?.addEventListener("click", async () => {
-  const current = refreshPlayer();
-  if (!current) {
-    showAction("Player session is missing.", true);
-    return;
-  }
   try {
-    const data = await apiRequest("/api/stripe/onboard-player", {
-      method: "POST",
-      body: JSON.stringify({
-        playerId: current.id,
-      }),
-    });
-    if (!data?.url) {
-      throw new Error("Stripe onboarding URL was not returned.");
-    }
-    window.location.assign(data.url);
+    await mountEmbeddedOnboarding();
   } catch (error) {
     showAction(error.message || "Could not start Stripe onboarding.", true);
   }
 });
+
+closeStripeOnboardingButton?.addEventListener("click", closeStripeOnboardingPanel);
 
 logoutButton?.addEventListener("click", () => {
   api.clearSession();
@@ -551,6 +628,7 @@ confirmSaveButton?.addEventListener("click", () => {
     if (team) sportCopy.textContent = `Sport: ${team.sport || ""}`;
     draftEquipment = cloneEquipment(current.equipment);
     render();
+    await refreshStripeStatus();
   } catch (error) {
     const message = error?.message || "Could not load player dashboard.";
     const main = document.querySelector(".dashboard-main");
