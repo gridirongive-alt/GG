@@ -93,7 +93,7 @@ function closeIntroOverlay() {
 
 if (introOverlay) {
   setTimeout(() => introOverlay.classList.add("is-ready"), 120);
-  setTimeout(closeIntroOverlay, 1300);
+  setTimeout(closeIntroOverlay, 2500);
 }
 
 function percentReached(raised, goal) {
