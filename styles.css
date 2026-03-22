@@ -43,41 +43,32 @@ body {
   position: fixed;
   inset: 0;
   z-index: 30;
-  display: grid;
-  place-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
   background: #11141a;
 }
 
-.intro-card {
-  width: min(320px, 92vw);
-  border-radius: 18px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(24, 27, 36, 0.9);
-  padding: 20px;
-  text-align: center;
-  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45);
+.intro-logo,
+.intro-spinner {
   transform: translateY(8px) scale(0.98);
   opacity: 0;
   transition: transform 420ms ease, opacity 420ms ease;
 }
 
-.intro-overlay.is-ready .intro-card {
+.intro-overlay.is-ready .intro-logo,
+.intro-overlay.is-ready .intro-spinner {
   transform: translateY(0) scale(1);
   opacity: 1;
 }
 
 .intro-logo {
-  width: 74px;
-  height: 74px;
-  border-radius: 18px;
-  object-fit: cover;
-  margin-bottom: 10px;
-}
-
-.intro-card h2 {
-  margin: 0 0 10px;
-  font-size: 1.3rem;
-  color: #fff;
+  width: min(960px, 92vw);
+  height: auto;
+  max-height: 72vh;
+  object-fit: contain;
 }
 
 .intro-spinner {
