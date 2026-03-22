@@ -904,17 +904,97 @@ app.get("/api/public/teams/:teamId", (req, res) => {
 });
 
 app.post("/api/donations", (req, res) => {
-  const { playerId, equipmentItemId, donorName, donorEmail, donorMessage, anonymous, amount } = req.body || {};
-  if (!playerId || !equipmentItemId || !donorName || !donorEmail || !amount) {
+  const {
+    playerId,
+    donationType,
+    equipmentItemId,
+    donorName,
+    donorEmail,
+    donorMessage,
+    anonymous,
+    amount
+  } = req.body || {};
+  if (!playerId || !donorName || !donorEmail || !amount) {
     return res.status(400).json({ error: "Missing required fields." });
   }
+  const value = Number(amount);
+  if (value <= 0) return res.status(400).json({ error: "Amount must be greater than zero." });
+  const enabledItems = db
+    .prepare(
+      `SELECT *
+       FROM equipment_items
+       WHERE player_id=? AND enabled=1`
+    )
+    .all(playerId)
+    .map((item) => ({
+      ...item,
+      remaining: Math.max(0, Number(item.goal || 0) - Number(item.raised || 0))
+    }));
+
+  if (donationType === "general") {
+    const overallRemaining = enabledItems.reduce((sum, item) => sum + item.remaining, 0);
+    if (overallRemaining > 0 && value > overallRemaining) {
+      return res
+        .status(400)
+        .json({ error: `Amount exceeds remaining overall goal ($${overallRemaining.toFixed(2)}).` });
+    }
+    const allocationTargets = enabledItems
+      .filter((item) => item.remaining > 0)
+      .sort((a, b) => b.remaining - a.remaining || b.goal - a.goal || a.name.localeCompare(b.name));
+    if (!allocationTargets.length) {
+      return res.status(404).json({ error: "No equipment items are available for general donation." });
+    }
+
+    let remainingDonation = value;
+    const allocations = [];
+    allocationTargets.forEach((item) => {
+      if (remainingDonation <= 0) return;
+      const applied = Math.min(item.remaining, remainingDonation);
+      if (applied <= 0) return;
+      allocations.push({ item, applied });
+      remainingDonation -= applied;
+    });
+
+    const donationIds = [];
+    const tx = db.transaction(() => {
+      allocations.forEach(({ item, applied }) => {
+        const donationId = uid("don");
+        donationIds.push(donationId);
+        db.prepare("UPDATE equipment_items SET raised = raised + ? WHERE id=?").run(applied, item.id);
+        db.prepare(
+          `INSERT INTO donations
+          (id, player_id, equipment_item_id, donor_name, donor_email, donor_message, anonymous, amount)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          donationId,
+          playerId,
+          item.id,
+          String(donorName).trim(),
+          normalizeEmail(donorEmail),
+          String(donorMessage || ""),
+          anonymous ? 1 : 0,
+          applied
+        );
+      });
+    });
+    tx();
+    return res.json({
+      donationId: donationIds[0],
+      donationIds,
+      amount: value,
+      allocations: allocations.map(({ item, applied }) => ({
+        equipmentItemId: item.id,
+        equipmentName: item.name,
+        amount: applied
+      }))
+    });
+  }
+
   const item = db
     .prepare("SELECT * FROM equipment_items WHERE id=? AND player_id=? AND enabled=1")
     .get(equipmentItemId, playerId);
   if (!item) return res.status(404).json({ error: "Equipment item unavailable." });
-  const value = Number(amount);
   const remaining = Math.max(0, Number(item.goal) - Number(item.raised));
-  if (value <= 0) return res.status(400).json({ error: "Amount must be greater than zero." });
   if (remaining > 0 && value > remaining) {
     return res.status(400).json({ error: `Amount exceeds remaining goal ($${remaining.toFixed(2)}).` });
   }

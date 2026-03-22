@@ -409,6 +409,7 @@ function getTeamRoster(teamId) {
 
 function recordDonation({
   playerInternalId,
+  donationType,
   equipmentIndex,
   donorName,
   donorEmail,
@@ -419,13 +420,66 @@ function recordDonation({
   const data = readData();
   const player = data.players.find((item) => item.id === playerInternalId);
   if (!player) throw new Error("Player not found.");
+  const donationAmount = Number(amount || 0);
+  if (donationAmount <= 0) throw new Error("Donation amount must be greater than $0.");
+
+  if (donationType === "general") {
+    const allocations = player.equipment
+      .map((equipment, index) => ({
+        equipment,
+        index,
+        remaining: equipment.enabled === false ? 0 : Math.max(0, Number(equipment.goal || 0) - Number(equipment.raised || 0)),
+      }))
+      .filter((item) => item.remaining > 0)
+      .sort((a, b) => b.remaining - a.remaining || Number(b.equipment.goal || 0) - Number(a.equipment.goal || 0));
+    const overallRemaining = allocations.reduce((sum, item) => sum + item.remaining, 0);
+    if (overallRemaining > 0 && donationAmount > overallRemaining) {
+      throw new Error(`Amount exceeds remaining overall goal ($${overallRemaining.toFixed(2)}).`);
+    }
+
+    let remainingDonation = donationAmount;
+    const appliedAllocations = [];
+    allocations.forEach((entry) => {
+      if (remainingDonation <= 0) return;
+      const applied = Math.min(entry.remaining, remainingDonation);
+      if (applied <= 0) return;
+      entry.equipment.raised = Number(entry.equipment.raised || 0) + applied;
+      appliedAllocations.push({
+        equipmentIndex: entry.index,
+        equipmentName: entry.equipment.name,
+        amount: applied,
+      });
+      data.donations.push({
+        id: `don-${randomPart(8)}`,
+        playerId: player.id,
+        equipmentIndex: entry.index,
+        equipmentName: entry.equipment.name,
+        amount: applied,
+        donorName: String(donorName || "").trim(),
+        donorEmail: String(donorEmail || "").trim(),
+        donorMessage: String(donorMessage || "").trim(),
+        anonymous: Boolean(anonymous),
+        createdAt: new Date().toISOString(),
+      });
+      remainingDonation -= applied;
+    });
+
+    const totals = equipmentTotals(player.equipment);
+    player.goalTotal = totals.goalTotal;
+    player.raisedTotal = totals.raisedTotal;
+    writeData(data);
+    return {
+      id: `don-${randomPart(8)}`,
+      playerId: player.id,
+      amount: donationAmount,
+      allocations: appliedAllocations,
+    };
+  }
+
   const idx = Number(equipmentIndex);
   const equipment = player.equipment[idx];
   if (!equipment || equipment.enabled === false) throw new Error("Equipment item unavailable.");
-
-  const donationAmount = Number(amount || 0);
   const remaining = Math.max(0, Number(equipment.goal || 0) - Number(equipment.raised || 0));
-  if (donationAmount <= 0) throw new Error("Donation amount must be greater than $0.");
   if (remaining > 0 && donationAmount > remaining) {
     throw new Error(`Amount exceeds remaining goal ($${remaining.toFixed(2)}).`);
   }
