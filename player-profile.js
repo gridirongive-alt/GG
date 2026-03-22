@@ -10,6 +10,7 @@ const donorStats = document.getElementById("donor-stats");
 const playerImage = document.getElementById("donor-player-image");
 const playerTeam = document.getElementById("donor-player-team");
 const equipmentGrid = document.getElementById("donor-equipment-grid");
+const generalDonationCard = document.getElementById("general-donation-card");
 const donationForm = document.getElementById("donation-form");
 const donationHelp = document.getElementById("donation-help");
 const donationFeedback = document.getElementById("donation-feedback");
@@ -26,6 +27,7 @@ let state = {
   player: null,
   team: null,
 };
+let selectedDonationMode = "equipment";
 let selectedIndex = null;
 
 function showAction(message, isError = false) {
@@ -141,6 +143,38 @@ function visibleEquipment(current) {
     .filter((item) => item.enabled !== false);
 }
 
+function totalRemaining(current) {
+  return visibleEquipment(current).reduce(
+    (sum, item) => sum + Math.max(0, Number(item.goal || 0) - Number(item.raised || 0)),
+    0
+  );
+}
+
+function renderGeneralDonationCard() {
+  const current = currentPlayer();
+  if (!current || !generalDonationCard) return;
+  const remaining = totalRemaining(current);
+  const progress = percent(current.raisedTotal, current.goalTotal);
+  generalDonationCard.innerHTML = `
+    <div class="equipment-row equipment-row-general">
+      <div class="equipment-row-top">
+        <strong>General Donation</strong>
+        <span class="meta-pill meta-pill-muted">Covers multiple items</span>
+      </div>
+      <p class="subtle-copy">${money(current.raisedTotal)} raised of ${money(current.goalTotal)}</p>
+      <div class="progress-track">
+        <div class="progress-fill" style="width:${progress}%"></div>
+      </div>
+      <div class="equipment-actions section-top-gap-sm">
+        <span class="subtle-copy">Remaining overall: ${money(remaining)}</span>
+        <button class="btn btn-money" type="button" id="general-donate-button">
+          Donate to Entire Goal
+        </button>
+      </div>
+    </div>
+  `;
+}
+
 function renderEquipment() {
   const current = currentPlayer();
   if (!current || !equipmentGrid) return;
@@ -181,6 +215,7 @@ function openDonationForm(equipmentIndex) {
   if (!current || !donationForm || !donationHelp) return;
   const item = current.equipment[equipmentIndex];
   if (!item) return;
+  selectedDonationMode = "equipment";
   selectedIndex = equipmentIndex;
   const remaining = Math.max(0, Number(item.goal || 0) - Number(item.raised || 0));
   selectedEquipmentCopy.textContent = `Selected: ${item.name} • Remaining ${money(remaining)}`;
@@ -190,29 +225,57 @@ function openDonationForm(equipmentIndex) {
   openDonationModal();
 }
 
+function openGeneralDonationForm() {
+  const current = currentPlayer();
+  if (!current || !donationForm || !donationHelp) return;
+  selectedDonationMode = "general";
+  selectedIndex = null;
+  const remaining = totalRemaining(current);
+  selectedEquipmentCopy.textContent = `Selected: General Donation • Remaining overall ${money(remaining)}`;
+  donationHelp.textContent =
+    "General donations automatically fill the highest remaining equipment goals first.";
+  donationForm.amount.value = remaining > 0 ? Math.min(remaining, 50) : 0;
+  donationFeedback.textContent = "";
+  openDonationModal();
+}
+
 async function submitDonation(formData) {
   const current = currentPlayer();
-  if (!current || selectedIndex === null) throw new Error("Choose an equipment item.");
-  const item = current.equipment[selectedIndex];
-  if (!item) throw new Error("Equipment item unavailable.");
+  if (!current) throw new Error("Player unavailable.");
+
+  const donationAmount = Number(formData.get("amount"));
+  if (selectedDonationMode === "general") {
+    const remaining = totalRemaining(current);
+    if (donationAmount <= 0) throw new Error("Donation amount must be greater than $0.");
+    if (remaining > 0 && donationAmount > remaining) {
+      throw new Error(`Amount exceeds remaining overall goal ($${remaining.toFixed(2)}).`);
+    }
+  } else {
+    if (selectedIndex === null) throw new Error("Choose an equipment item.");
+    const item = current.equipment[selectedIndex];
+    if (!item) throw new Error("Equipment item unavailable.");
+  }
 
   if (mode === "backend") {
     return apiRequest("/api/donations", {
       method: "POST",
       body: JSON.stringify({
         playerId: current.id,
-        equipmentItemId: item.id,
+        donationType: selectedDonationMode,
+        equipmentItemId:
+          selectedDonationMode === "equipment" ? current.equipment[selectedIndex]?.id || null : null,
         donorName: formData.get("donorName"),
         donorEmail: formData.get("donorEmail"),
         donorMessage: formData.get("donorMessage"),
         anonymous: Boolean(formData.get("anonymous")),
-        amount: Number(formData.get("amount")),
+        amount: donationAmount,
       }),
     });
   }
 
   return api.recordDonation({
     playerInternalId: current.id,
+    donationType: selectedDonationMode,
     equipmentIndex: selectedIndex,
     donorName: formData.get("donorName"),
     donorEmail: formData.get("donorEmail"),
@@ -240,12 +303,26 @@ equipmentGrid?.addEventListener("click", (event) => {
   openDonationForm(Number(eqIndex));
 });
 
+generalDonationCard?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.id !== "general-donate-button") return;
+  openGeneralDonationForm();
+});
+
 fillRemainingButton?.addEventListener("click", () => {
   const current = currentPlayer();
-  if (!current || selectedIndex === null || !donationForm) return;
-  const item = current.equipment[selectedIndex];
-  if (!item) return;
-  const remaining = Math.max(0, Number(item.goal || 0) - Number(item.raised || 0));
+  if (!current || !donationForm) return;
+  const remaining =
+    selectedDonationMode === "general"
+      ? totalRemaining(current)
+      : selectedIndex === null
+        ? 0
+        : Math.max(
+            0,
+            Number(current.equipment[selectedIndex]?.goal || 0) -
+              Number(current.equipment[selectedIndex]?.raised || 0)
+          );
   donationForm.amount.value = remaining;
 });
 
@@ -260,11 +337,13 @@ donationForm?.addEventListener("submit", async (event) => {
     donationFeedback.classList.remove("is-error");
     showAction(`Donation confirmed (${money(donation.amount)}). Thank you for supporting this athlete.`);
     donationForm.reset();
+    selectedDonationMode = "equipment";
     selectedIndex = null;
     closeDonationModal();
     donationHelp.textContent = "Donation complete. You can donate to another item anytime.";
     await refreshAfterDonation();
     renderTop();
+    renderGeneralDonationCard();
     renderEquipment();
     renderProfileInfo();
   } catch (error) {
@@ -295,6 +374,7 @@ document.addEventListener("keydown", (event) => {
     await loadPlayer();
     renderTop();
     renderProfileInfo();
+    renderGeneralDonationCard();
     renderEquipment();
   } catch {
     window.location.href = "/index.html";
