@@ -17,6 +17,7 @@ const donationFeedback = document.getElementById("donation-feedback");
 const selectedEquipmentCopy = document.getElementById("selected-equipment-copy");
 const fillRemainingButton = document.getElementById("fill-remaining");
 const jumpToDonateButton = document.getElementById("jump-to-donate");
+const topGeneralDonateButton = document.getElementById("top-general-donate");
 const donatePanel = document.getElementById("donate-panel");
 const donorModalBackdrop = document.getElementById("donor-modal-backdrop");
 const donationModal = document.getElementById("donation-modal");
@@ -355,6 +356,10 @@ donationForm?.addEventListener("submit", async (event) => {
 
 jumpToDonateButton?.addEventListener("click", () => {
   donatePanel?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
+
+topGeneralDonateButton?.addEventListener("click", () => {
+  openGeneralDonationForm();
 });
 
 donorModalCloseButtons.forEach((button) => {
