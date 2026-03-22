@@ -899,6 +899,13 @@ a.table-name-link {
   gap: 16px;
 }
 
+.donor-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
 .stats-row {
   display: flex;
   gap: 8px;
