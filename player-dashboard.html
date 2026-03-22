@@ -67,6 +67,17 @@
           </article>
         </section>
       </section>
+
+      <section class="card section-top-gap" id="stripe-onboarding-panel" hidden>
+        <div class="modal-header">
+          <h2 class="section-title">Stripe Payout Setup</h2>
+          <button class="icon-btn" type="button" id="close-stripe-onboarding" aria-label="Close">
+            &times;
+          </button>
+        </div>
+        <p class="subtle-copy">Complete your payout onboarding below without leaving Gridiron Give.</p>
+        <div id="stripe-onboarding-container" class="section-top-gap-sm"></div>
+      </section>
     </main>
 
     <div class="modal-backdrop" id="player-modal-backdrop" hidden>
@@ -116,6 +127,7 @@
     <script src="./data.js"></script>
     <script src="./action-modal.js"></script>
     <script src="./header-session.js"></script>
+    <script src="https://connect-js.stripe.com/v1.0/connect.js"></script>
     <script src="./player-dashboard.js"></script>
   </body>
 </html>

@@ -39,7 +39,10 @@
           <p class="dashboard-copy" id="donor-team-copy"></p>
         </div>
         <div class="player-top-center">
-          <button class="btn btn-money-soft" type="button" id="jump-to-donate">Make a Donation</button>
+          <div class="donor-hero-actions">
+            <button class="btn btn-money-soft" type="button" id="jump-to-donate">Make a Donation</button>
+            <button class="btn btn-money" type="button" id="top-general-donate">General Donation</button>
+          </div>
         </div>
         <div class="stats-row" id="donor-stats"></div>
       </section>
@@ -107,12 +110,16 @@
             Message (Optional)
             <textarea name="donorMessage" rows="3"></textarea>
           </label>
+          <label class="toggle-label donation-fee-toggle">
+            <input type="checkbox" name="coverFees" id="cover-fees-checkbox" />
+            Add a small contribution so 100% of your donation goes to the athlete.
+          </label>
           <div class="donation-footer">
             <label class="toggle-label">
               <input type="checkbox" name="anonymous" />
               Donate anonymously
             </label>
-            <button class="btn btn-money" type="submit">Confirm Donation</button>
+            <button class="btn btn-money" type="submit" id="confirm-donation-button">Donate</button>
           </div>
         </form>
       </section>
@@ -121,6 +128,7 @@
     <script src="./data.js"></script>
     <script src="./action-modal.js"></script>
     <script src="./header-session.js"></script>
+    <script src="https://js.stripe.com/v3"></script>
     <script src="./player-profile.js"></script>
   </body>
 </html>
