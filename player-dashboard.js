@@ -22,9 +22,6 @@ const publishToggle = document.getElementById("publish-toggle");
 const playerImageInput = document.getElementById("player-image-input");
 const playerImagePreview = document.getElementById("player-image-preview");
 const payoutsButton = document.getElementById("setup-payouts");
-const stripeOnboardingPanel = document.getElementById("stripe-onboarding-panel");
-const stripeOnboardingContainer = document.getElementById("stripe-onboarding-container");
-const closeStripeOnboardingButton = document.getElementById("close-stripe-onboarding");
 const logoutButton = document.getElementById("player-logout");
 const addEquipmentButton = document.getElementById("add-equipment");
 const playerModalBackdrop = document.getElementById("player-modal-backdrop");
@@ -36,8 +33,6 @@ const playerModalCloseButtons = [...document.querySelectorAll("[data-player-moda
 
 let draftEquipment = [];
 let pendingSave = null;
-let stripeConfig = null;
-let stripeConnectInstance = null;
 
 function showAction(message, isError = false) {
   if (typeof window.showActionMessage === "function") {
@@ -360,12 +355,6 @@ function render() {
   renderEquipment();
 }
 
-async function ensureStripeConfig() {
-  if (stripeConfig) return stripeConfig;
-  stripeConfig = await apiRequest("/api/stripe/config");
-  return stripeConfig;
-}
-
 async function refreshStripeStatus() {
   const current = refreshPlayer();
   if (!current || mode !== "backend" || !current.id) return;
@@ -381,55 +370,24 @@ async function refreshStripeStatus() {
   } catch {}
 }
 
-function closeStripeOnboardingPanel() {
-  if (stripeOnboardingPanel) stripeOnboardingPanel.hidden = true;
-  if (stripeOnboardingContainer) stripeOnboardingContainer.innerHTML = "";
-  stripeConnectInstance = null;
-}
-
-async function mountEmbeddedOnboarding() {
+async function openHostedStripeOnboarding() {
   const current = refreshPlayer();
   if (!current) throw new Error("Player session is missing.");
-  const config = await ensureStripeConfig();
-  if (!config?.configured || !config?.publishableKey) {
-    throw new Error("Stripe publishable key is not configured.");
-  }
-  if (!window.StripeConnect?.loadConnectAndInitialize) {
-    throw new Error("Stripe embedded onboarding failed to load.");
-  }
-
-  const fetchClientSecret = async () => {
-    const response = await apiRequest("/create-account-session", {
-      method: "POST",
-      body: JSON.stringify({
-        playerId: current.id,
-        stripe_account_id: current.stripeAccountId || "",
-      }),
-    });
-    if (response?.stripe_account_id) {
-      current.stripeAccountId = String(response.stripe_account_id);
-    }
-    return response.client_secret;
-  };
-
-  stripeConnectInstance = window.StripeConnect.loadConnectAndInitialize({
-    publishableKey: config.publishableKey,
-    fetchClientSecret,
+  const response = await apiRequest("/onboard-player", {
+    method: "POST",
+    body: JSON.stringify({
+      playerId: current.id,
+      stripe_account_id: current.stripeAccountId || "",
+    }),
   });
-
-  if (!stripeOnboardingContainer || !stripeOnboardingPanel) {
-    throw new Error("Stripe onboarding container is missing.");
+  if (response?.stripeAccountId) {
+    current.stripeAccountId = String(response.stripeAccountId);
   }
-  stripeOnboardingContainer.innerHTML = "";
-  stripeOnboardingPanel.hidden = false;
-
-  const onboarding = stripeConnectInstance.create("account-onboarding");
-  onboarding.setOnExit(async () => {
-    await refreshStripeStatus();
-    closeStripeOnboardingPanel();
-  });
-  stripeOnboardingContainer.appendChild(onboarding);
-  stripeOnboardingPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (!response?.url) {
+    throw new Error("Stripe onboarding link was not returned.");
+  }
+  window.open(response.url, "_blank", "noopener,noreferrer");
+  showAction("Stripe payout setup opened in a new tab.");
 }
 
 equipmentList?.addEventListener("input", (event) => {
@@ -549,13 +507,11 @@ playerImageInput?.addEventListener("change", async () => {
 
 payoutsButton?.addEventListener("click", async () => {
   try {
-    await mountEmbeddedOnboarding();
+    await openHostedStripeOnboarding();
   } catch (error) {
     showAction(error.message || "Could not start Stripe onboarding.", true);
   }
 });
-
-closeStripeOnboardingButton?.addEventListener("click", closeStripeOnboardingPanel);
 
 logoutButton?.addEventListener("click", () => {
   api.clearSession();
@@ -572,6 +528,16 @@ playerModalBackdrop?.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closePlayerModal();
+});
+
+window.addEventListener("focus", () => {
+  refreshStripeStatus();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    refreshStripeStatus();
+  }
 });
 
 confirmSaveButton?.addEventListener("click", () => {
