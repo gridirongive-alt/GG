@@ -67,9 +67,23 @@ CREATE TABLE IF NOT EXISTS donations (
   donor_message TEXT NOT NULL DEFAULT '',
   anonymous INTEGER NOT NULL DEFAULT 0,
   amount REAL NOT NULL,
+  stripe_checkout_session_id TEXT NOT NULL DEFAULT '',
+  stripe_payment_intent_id TEXT NOT NULL DEFAULT '',
+  stripe_charge_id TEXT NOT NULL DEFAULT '',
+  checkout_total_amount REAL NOT NULL DEFAULT 0,
+  application_fee_amount REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE,
   FOREIGN KEY (equipment_item_id) REFERENCES equipment_items(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_donations_player_id ON donations(player_id);
+
+CREATE TABLE IF NOT EXISTS processed_checkout_sessions (
+  session_id TEXT PRIMARY KEY,
+  payment_intent_id TEXT NOT NULL DEFAULT '',
+  charge_id TEXT NOT NULL DEFAULT '',
+  transfer_id TEXT NOT NULL DEFAULT '',
+  player_id TEXT NOT NULL DEFAULT '',
+  processed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

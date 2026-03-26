@@ -120,6 +120,21 @@ function ensureColumns() {
   if (!hasColumn("players", "stripe_onboarding_complete")) {
     db.prepare('ALTER TABLE players ADD COLUMN "stripe_onboarding_complete" INTEGER NOT NULL DEFAULT 0').run();
   }
+  if (!hasColumn("donations", "stripe_checkout_session_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "stripe_checkout_session_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("donations", "stripe_payment_intent_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "stripe_payment_intent_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("donations", "stripe_charge_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "stripe_charge_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("donations", "checkout_total_amount")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "checkout_total_amount" REAL NOT NULL DEFAULT 0').run();
+  }
+  if (!hasColumn("donations", "application_fee_amount")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "application_fee_amount" REAL NOT NULL DEFAULT 0').run();
+  }
 }
 
 function migratePasswordsAndRecoveryKeys() {
