@@ -442,11 +442,16 @@ async function openHostedStripeOnboarding(payoutWindow) {
 
 function resetStripeSetupGate() {
   if (stripeSetupScroll) stripeSetupScroll.scrollTop = 0;
-  if (continueStripeSetupButton) continueStripeSetupButton.disabled = true;
+  if (continueStripeSetupButton) continueStripeSetupButton.disabled = false;
+  evaluateStripeSetupGate();
 }
 
 function evaluateStripeSetupGate() {
   if (!stripeSetupScroll || !continueStripeSetupButton) return;
+  if (stripeSetupScroll.scrollHeight <= stripeSetupScroll.clientHeight + 8) {
+    continueStripeSetupButton.disabled = false;
+    return;
+  }
   const threshold = stripeSetupScroll.scrollHeight - stripeSetupScroll.clientHeight - 8;
   continueStripeSetupButton.disabled = stripeSetupScroll.scrollTop < Math.max(0, threshold);
 }
