@@ -257,6 +257,63 @@ function trimTrailingSlash(value) {
   return String(value || "").replace(/\/+$/u, "");
 }
 
+function estimateStripeFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.round(safeTotal * 0.029) + 30;
+}
+
+function minimumPlatformFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.max(Math.round(safeTotal * 0.05), estimateStripeFeeCents(safeTotal));
+}
+
+function netPlayerAmountFromGrossCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.max(0, safeTotal - estimateStripeFeeCents(safeTotal) - minimumPlatformFeeCents(safeTotal));
+}
+
+function computeStripeDonationSplit(baseAmountCents, coverFees) {
+  const base = Math.max(0, Math.round(Number(baseAmountCents || 0)));
+  if (!base) {
+    return {
+      checkoutTotalCents: 0,
+      stripeFeeCents: 0,
+      applicationFeeCents: 0,
+      playerAmountCents: 0,
+      coverFees: Boolean(coverFees)
+    };
+  }
+
+  if (!coverFees) {
+    const stripeFeeCents = estimateStripeFeeCents(base);
+    const applicationFeeCents = minimumPlatformFeeCents(base);
+    return {
+      checkoutTotalCents: base,
+      stripeFeeCents,
+      applicationFeeCents,
+      playerAmountCents: Math.max(0, base - stripeFeeCents - applicationFeeCents),
+      coverFees: false
+    };
+  }
+
+  let checkoutTotalCents = base;
+  for (let attempts = 0; attempts < 20000; attempts += 1) {
+    const stripeFeeCents = estimateStripeFeeCents(checkoutTotalCents);
+    if (checkoutTotalCents - stripeFeeCents - minimumPlatformFeeCents(checkoutTotalCents) >= base) {
+      return {
+        checkoutTotalCents,
+        stripeFeeCents,
+        applicationFeeCents: checkoutTotalCents - base - stripeFeeCents,
+        playerAmountCents: base,
+        coverFees: true
+      };
+    }
+    checkoutTotalCents += 1;
+  }
+
+  throw new Error("Could not calculate Stripe donation totals.");
+}
+
 const appBaseUrl = trimTrailingSlash(process.env.APP_BASE_URL || `http://localhost:${PORT}`);
 const publicSiteUrl = `${appBaseUrl}/`;
 const gmailUser = process.env.GMAIL_USER || "";
@@ -923,8 +980,13 @@ async function createCheckoutSessionHandler(req, res) {
   }
 
   const cover = Boolean(coverFees);
-  const newTotal = cover ? Math.round(baseAmount / 0.95) : Math.round(baseAmount);
-  const applicationFeeAmount = cover ? newTotal - Math.round(baseAmount) : Math.round(newTotal * 0.05);
+  const split = computeStripeDonationSplit(baseAmount, cover);
+  if (split.playerAmountCents <= 0) {
+    return res.status(400).json({
+      error:
+        "This donation amount is too small after processing and platform fees. Please increase the amount or cover fees."
+    });
+  }
 
   try {
     const destinationAccount = await stripe.accounts.retrieve(stripeAccountId);
@@ -950,7 +1012,7 @@ async function createCheckoutSessionHandler(req, res) {
           quantity: 1,
           price_data: {
             currency: "usd",
-            unit_amount: newTotal,
+            unit_amount: split.checkoutTotalCents,
             product_data: {
               name: donationType === "general" ? "General Donation" : "Equipment Donation",
               description: "Gridiron Give athlete support donation"
@@ -966,10 +1028,10 @@ async function createCheckoutSessionHandler(req, res) {
       )}&checkout=cancelled`,
       customer_email: donorEmail ? normalizeEmail(donorEmail) : undefined,
       payment_intent_data: {
-        application_fee_amount: applicationFeeAmount,
         on_behalf_of: stripeAccountId,
         transfer_data: {
-          destination: stripeAccountId
+          destination: stripeAccountId,
+          amount: split.playerAmountCents
         }
       },
       metadata: {
@@ -982,6 +1044,9 @@ async function createCheckoutSessionHandler(req, res) {
         donorMessage: String(donorMessage || "").slice(0, 400),
         anonymous: anonymous ? "true" : "false",
         baseAmount: String(Math.round(baseAmount)),
+        playerAmount: String(split.playerAmountCents),
+        stripeFeeAmount: String(split.stripeFeeCents),
+        applicationFeeAmount: String(split.applicationFeeCents),
         coverFees: cover ? "true" : "false"
       }
     });
@@ -989,8 +1054,10 @@ async function createCheckoutSessionHandler(req, res) {
     return res.json({
       url: session.url,
       sessionId: session.id,
-      totalAmount: newTotal,
-      applicationFeeAmount
+      totalAmount: split.checkoutTotalCents,
+      playerAmount: split.playerAmountCents,
+      applicationFeeAmount: split.applicationFeeCents,
+      stripeFeeAmount: split.stripeFeeCents
     });
   } catch (error) {
     return res.status(500).json({ error: error?.message || "Could not create checkout session." });
@@ -1062,9 +1129,9 @@ app.post("/stripe/webhook", (req, res) => {
         const donorMessage = String(metadata.donorMessage || "").trim();
         const equipmentItemId = String(metadata.equipmentItemId || "").trim();
         const anonymous = String(metadata.anonymous || "") === "true";
-        const athleteAmount = Number(metadata.baseAmount || 0) / 100;
+        const athleteAmount = Number(metadata.playerAmount || metadata.baseAmount || 0) / 100;
         const checkoutTotalAmount = Number(session.amount_total || 0) / 100;
-        const applicationFeeAmount = Number(paymentIntent.application_fee_amount || 0) / 100;
+        const applicationFeeAmount = Number(metadata.applicationFeeAmount || 0) / 100;
 
         if (!playerId || !donorEmail || athleteAmount <= 0) {
           throw new Error("Stripe checkout metadata is incomplete.");

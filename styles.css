@@ -1160,6 +1160,11 @@ a.table-name-link {
   margin-top: 2px;
 }
 
+.donation-fee-note {
+  margin: -2px 2px 2px;
+  color: #4d6688;
+}
+
 #stripe-onboarding-container {
   min-height: 640px;
   border: 1px solid var(--border);

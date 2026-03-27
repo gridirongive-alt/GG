@@ -20,6 +20,7 @@ const fillRemainingButton = document.getElementById("fill-remaining");
 const jumpToDonateButton = document.getElementById("jump-to-donate");
 const topGeneralDonateButton = document.getElementById("top-general-donate");
 const coverFeesCheckbox = document.getElementById("cover-fees-checkbox");
+const coverFeesCopy = document.getElementById("cover-fees-copy");
 const confirmDonationButton = document.getElementById("confirm-donation-button");
 const donatePanel = document.getElementById("donate-panel");
 const donorModalBackdrop = document.getElementById("donor-modal-backdrop");
@@ -164,25 +165,58 @@ function dollarsToCents(dollars) {
   return Math.round(Number(dollars || 0) * 100);
 }
 
+function estimateStripeFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.round(safeTotal * 0.029) + 30;
+}
+
+function minimumPlatformFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.max(Math.round(safeTotal * 0.05), estimateStripeFeeCents(safeTotal));
+}
+
 function computeCheckoutAmounts(dollars, coverFees) {
   const baseCents = dollarsToCents(dollars);
   if (!baseCents) {
     return {
       athleteAmountCents: 0,
       checkoutTotalCents: 0,
+      stripeFeeCents: 0,
+      applicationFeeCents: 0,
       coverFees: Boolean(coverFees),
     };
   }
   if (!coverFees) {
+    const stripeFeeCents = estimateStripeFeeCents(baseCents);
+    const applicationFeeCents = minimumPlatformFeeCents(baseCents);
     return {
-      athleteAmountCents: baseCents,
+      athleteAmountCents: Math.max(0, baseCents - stripeFeeCents - applicationFeeCents),
       checkoutTotalCents: baseCents,
+      stripeFeeCents,
+      applicationFeeCents,
       coverFees: false,
     };
   }
+  let checkoutTotalCents = baseCents;
+  for (let attempts = 0; attempts < 20000; attempts += 1) {
+    const stripeFeeCents = estimateStripeFeeCents(checkoutTotalCents);
+    const minimumPlatformFee = minimumPlatformFeeCents(checkoutTotalCents);
+    if (checkoutTotalCents - stripeFeeCents - minimumPlatformFee >= baseCents) {
+      return {
+        athleteAmountCents: baseCents,
+        checkoutTotalCents,
+        stripeFeeCents,
+        applicationFeeCents: checkoutTotalCents - baseCents - stripeFeeCents,
+        coverFees: true,
+      };
+    }
+    checkoutTotalCents += 1;
+  }
   return {
     athleteAmountCents: baseCents,
-    checkoutTotalCents: Math.round(baseCents / 0.95),
+    checkoutTotalCents: baseCents,
+    stripeFeeCents: 0,
+    applicationFeeCents: 0,
     coverFees: true,
   };
 }
@@ -193,10 +227,25 @@ function updateDonationButtonText() {
   const coverFees = coverFeesCheckbox?.checked === true;
   if (!enteredAmount || enteredAmount <= 0) {
     confirmDonationButton.textContent = "Donate";
+    if (coverFeesCopy) {
+      coverFeesCopy.textContent =
+        "Keeping fee coverage on helps the athlete receive the full amount you intend to give.";
+    }
     return;
   }
   const totals = computeCheckoutAmounts(enteredAmount, coverFees);
   confirmDonationButton.textContent = `Donate ${money(centsToDollars(totals.checkoutTotalCents))}`;
+  if (coverFeesCopy) {
+    if (coverFees) {
+      coverFeesCopy.textContent = `Checkout total ${money(
+        centsToDollars(totals.checkoutTotalCents)
+      )}. The athlete receives the full ${money(centsToDollars(totals.athleteAmountCents))} donation.`;
+    } else {
+      coverFeesCopy.textContent = `If you turn this off, the athlete will receive ${money(
+        centsToDollars(totals.athleteAmountCents)
+      )}, which is less than your intended donation after card and platform fees.`;
+    }
+  }
 }
 
 async function ensureStripeConfig() {
@@ -276,7 +325,7 @@ function openDonationForm(equipmentIndex) {
   selectedEquipmentCopy.textContent = `Selected: ${item.name} • Remaining ${money(remaining)}`;
   donationHelp.textContent = `Selected ${item.name}. Complete your donation in the popup modal.`;
   donationForm.amount.value = remaining > 0 ? Math.min(remaining, 25) : 0;
-  if (coverFeesCheckbox) coverFeesCheckbox.checked = false;
+  if (coverFeesCheckbox) coverFeesCheckbox.checked = true;
   donationFeedback.textContent = "";
   donationFeedback.classList.remove("is-error");
   updateDonationButtonText();
@@ -293,7 +342,7 @@ function openGeneralDonationForm() {
   donationHelp.textContent =
     "General donations automatically fill the highest remaining equipment goals first.";
   donationForm.amount.value = remaining > 0 ? Math.min(remaining, 50) : 0;
-  if (coverFeesCheckbox) coverFeesCheckbox.checked = false;
+  if (coverFeesCheckbox) coverFeesCheckbox.checked = true;
   donationFeedback.textContent = "";
   donationFeedback.classList.remove("is-error");
   updateDonationButtonText();
@@ -329,7 +378,7 @@ async function submitDonation(formData) {
         method: "POST",
         body: JSON.stringify({
           stripe_account_id: current.stripeAccountId,
-          amount: checkout.athleteAmountCents,
+          amount: dollarsToCents(donationAmount),
           coverFees,
           playerId: current.id,
           publicPlayerId,
@@ -348,6 +397,7 @@ async function submitDonation(formData) {
       return {
         redirectUrl: response.url,
         amount: centsToDollars(response.totalAmount || checkout.checkoutTotalCents),
+        athleteAmount: centsToDollars(response.playerAmount || checkout.athleteAmountCents),
         externalCheckout: true,
       };
     }
