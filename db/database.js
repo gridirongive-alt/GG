@@ -111,6 +111,15 @@ function ensureColumns() {
   if (!hasColumn("coaches", "team_name")) {
     db.prepare('ALTER TABLE coaches ADD COLUMN "team_name" TEXT NOT NULL DEFAULT ""').run();
   }
+  if (!hasColumn("coaches", "stripe_account_id")) {
+    db.prepare('ALTER TABLE coaches ADD COLUMN "stripe_account_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("coaches", "stripe_onboarding_complete")) {
+    db.prepare('ALTER TABLE coaches ADD COLUMN "stripe_onboarding_complete" INTEGER NOT NULL DEFAULT 0').run();
+  }
+  if (!hasColumn("teams", "recipient_mode")) {
+    db.prepare('ALTER TABLE teams ADD COLUMN "recipient_mode" TEXT NOT NULL DEFAULT "coach"').run();
+  }
   if (!hasColumn("players", "team_name")) {
     db.prepare('ALTER TABLE players ADD COLUMN "team_name" TEXT NOT NULL DEFAULT ""').run();
   }
@@ -135,7 +144,34 @@ function ensureColumns() {
   if (!hasColumn("donations", "application_fee_amount")) {
     db.prepare('ALTER TABLE donations ADD COLUMN "application_fee_amount" REAL NOT NULL DEFAULT 0').run();
   }
+  if (!hasColumn("donations", "team_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "team_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("donations", "payout_recipient_type")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "payout_recipient_type" TEXT NOT NULL DEFAULT "player"').run();
+  }
+  if (!hasColumn("donations", "payout_recipient_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "payout_recipient_id" TEXT NOT NULL DEFAULT ""').run();
+  }
+  if (!hasColumn("donations", "stripe_destination_account_id")) {
+    db.prepare('ALTER TABLE donations ADD COLUMN "stripe_destination_account_id" TEXT NOT NULL DEFAULT ""').run();
+  }
 }
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS team_equipment_templates (
+    id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'General',
+    price_range TEXT NOT NULL DEFAULT '',
+    goal REAL NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    FOREIGN KEY (team_id) REFERENCES teams(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_team_equipment_team_id ON team_equipment_templates(team_id);
+`);
 
 function migratePasswordsAndRecoveryKeys() {
   const coaches = db.prepare('SELECT id, password, "PW_Recovery_Key" AS recovery_key FROM coaches').all();
