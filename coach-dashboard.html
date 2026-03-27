@@ -68,9 +68,33 @@
                     <option value="baseball">Baseball</option>
                   </select>
                 </label>
+                <fieldset class="choice-group">
+                  <legend>Payout Recipient</legend>
+                  <label class="choice-card is-recommended">
+                    <input type="radio" name="recipientMode" value="coach" />
+                    <span>
+                      <strong>Coach receives donations</strong>
+                      <small>Recommended for youth teams. Players can still claim accounts and donors still choose who they are supporting.</small>
+                    </span>
+                  </label>
+                  <label class="choice-card">
+                    <input type="radio" name="recipientMode" value="player" />
+                    <span>
+                      <strong>Players receive donations individually</strong>
+                      <small>Each player handles Stripe onboarding and receives funds separately.</small>
+                    </span>
+                  </label>
+                </fieldset>
                 <button class="btn btn-primary" type="submit">Save Team Profile</button>
               </form>
               <p class="form-feedback" id="team-feedback"></p>
+              <div class="player-payout-actions section-top-gap-sm" id="coach-payout-actions" hidden>
+                <button class="btn btn-money" type="button" id="coach-setup-payouts">Connect Team Stripe</button>
+                <button class="btn btn-soft" type="button" id="coach-open-stripe-dashboard" hidden>
+                  Open Stripe Dashboard
+                </button>
+              </div>
+              <p class="subtle-copy section-top-gap-sm" id="coach-payout-copy" hidden></p>
             </div>
           </details>
         </article>
@@ -158,6 +182,38 @@
       <section class="card section-top-gap" id="player-preview-card" hidden>
         <h2 class="section-title">Player Preview (Donor View)</h2>
         <div id="player-preview-content"></div>
+      </section>
+
+      <section class="card section-top-gap" id="shared-equipment-card" hidden>
+        <h2 class="section-title">Team Equipment Pricing</h2>
+        <p class="subtle-copy">
+          Set one shared list of equipment prices for every player on the roster.
+        </p>
+        <div id="shared-equipment-list" class="equipment-grid section-top-gap-sm"></div>
+        <div class="equipment-actions section-top-gap-sm">
+          <button class="btn btn-soft" type="button" id="shared-equipment-add">Add Team Item</button>
+          <button class="btn btn-money" type="button" id="shared-equipment-save">Save Team Pricing</button>
+        </div>
+        <p class="form-feedback" id="shared-equipment-feedback"></p>
+      </section>
+
+      <section class="card section-top-gap" id="coach-transactions-card" hidden>
+        <h2 class="section-title">Team Transactions</h2>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Player</th>
+                <th>Item</th>
+                <th>Credited</th>
+                <th>Checkout Total</th>
+                <th>Platform Fee</th>
+              </tr>
+            </thead>
+            <tbody id="coach-transactions-body"></tbody>
+          </table>
+        </div>
       </section>
     </main>
 

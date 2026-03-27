@@ -610,6 +610,10 @@ select:focus {
   animation: modal-in 200ms ease-out;
 }
 
+.modal-wide {
+  width: min(720px, 100%);
+}
+
 .modal-header {
   display: flex;
   align-items: center;
@@ -677,6 +681,95 @@ select:focus {
   gap: 6px;
   font-size: 0.92rem;
   font-weight: 600;
+}
+
+.choice-group {
+  margin: 4px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.choice-group legend {
+  padding: 0 6px;
+  font-weight: 800;
+  color: var(--text);
+}
+
+.choice-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: #f8fbff;
+}
+
+.choice-card.is-recommended {
+  border-color: #a9bee8;
+  background: #f2f7ff;
+}
+
+.choice-card span {
+  display: grid;
+  gap: 4px;
+}
+
+.choice-card small {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.choice-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.payout-choice-card {
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 18px;
+  background: #f8fbff;
+  display: grid;
+  gap: 12px;
+}
+
+.payout-choice-card.is-recommended {
+  border-color: #9fb8ea;
+  background: #f1f7ff;
+}
+
+.payout-choice-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.choice-points {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--text);
+}
+
+.choice-caution {
+  margin: 0;
+  color: #536985;
+  font-weight: 700;
+}
+
+.selected-setup-banner {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #f8fbff;
 }
 
 .form-feedback {

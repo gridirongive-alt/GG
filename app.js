@@ -11,6 +11,11 @@ const playerForgotPasswordButton = document.getElementById("player-forgot-passwo
 const forgotPasswordForm = document.getElementById("forgot-password-form");
 const startCoachSignupButton = document.getElementById("start-coach-signup");
 const startPlayerSignupButton = document.getElementById("start-player-signup");
+const coachModeButtons = [...document.querySelectorAll("[data-select-coach-mode]")];
+const coachRecipientModeInput = document.getElementById("coach-recipient-mode-input");
+const coachSetupModeLabel = document.getElementById("coach-setup-mode-label");
+const coachSetupModeCopy = document.getElementById("coach-setup-mode-copy");
+const changeCoachPayoutModeButton = document.getElementById("change-coach-payout-mode");
 const contactForm = document.getElementById("contact-form");
 const introOverlay = document.getElementById("intro-overlay");
 const featuredCard = document.getElementById("featured-player-card");
@@ -92,8 +97,8 @@ function closeIntroOverlay() {
 }
 
 if (introOverlay) {
-  setTimeout(() => introOverlay.classList.add("is-ready"), 120);
-  setTimeout(closeIntroOverlay, 2500);
+  setTimeout(() => introOverlay.classList.add("is-ready"), 80);
+  setTimeout(closeIntroOverlay, 1800);
 }
 
 function percentReached(raised, goal) {
@@ -196,8 +201,31 @@ function openCreateAccountWithTab(targetPanelId) {
   });
 }
 
-startCoachSignupButton?.addEventListener("click", () => openCreateAccountWithTab("coach-signup"));
+function applyCoachRecipientMode(mode) {
+  const safeMode = mode === "player" ? "player" : "coach";
+  if (coachRecipientModeInput) coachRecipientModeInput.value = safeMode;
+  if (coachSetupModeLabel) {
+    coachSetupModeLabel.textContent =
+      safeMode === "coach" ? "Coach receives donations" : "Players receive donations individually";
+  }
+  if (coachSetupModeCopy) {
+    coachSetupModeCopy.textContent =
+      safeMode === "coach"
+        ? "Recommended for youth teams. The coach connects Stripe once and receives donations on behalf of players."
+        : "Each player will be responsible for completing Stripe onboarding and receiving donations personally.";
+  }
+}
+
+startCoachSignupButton?.addEventListener("click", () => showModal("coach-payout-modal"));
 startPlayerSignupButton?.addEventListener("click", () => openCreateAccountWithTab("player-signup"));
+changeCoachPayoutModeButton?.addEventListener("click", () => showModal("coach-payout-modal"));
+coachModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    applyCoachRecipientMode(button.dataset.selectCoachMode);
+    openCreateAccountWithTab("coach-signup");
+  });
+});
+applyCoachRecipientMode("coach");
 
 function buildSuggestionItem(text, onClick) {
   const li = document.createElement("li");
@@ -318,7 +346,8 @@ coachSignupForm?.addEventListener("submit", async (event) => {
         name: formData.get("coachName"),
         email: formData.get("coachEmail"),
         password,
-        teamName: formData.get("teamName")
+        teamName: formData.get("teamName"),
+        recipientMode: formData.get("recipientMode")
       })
     });
     const backendCoachId = created.coachId;

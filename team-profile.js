@@ -3,18 +3,47 @@ api.bootstrapDemoData();
 
 const params = new URLSearchParams(window.location.search);
 const teamId = params.get("teamId");
+const checkoutStatus = params.get("checkout");
 
 const teamTop = document.getElementById("team-top");
 const rosterBody = document.getElementById("team-roster-body");
+const teamDonateCard = document.getElementById("team-donate-card");
+const teamDonateCopy = document.getElementById("team-donate-copy");
+const teamGeneralDonationCard = document.getElementById("team-general-donation-card");
+const teamEquipmentGrid = document.getElementById("team-equipment-grid");
+const donorModalBackdrop = document.getElementById("team-donor-modal-backdrop");
+const donationModal = document.getElementById("team-donation-modal");
+const donationForm = document.getElementById("team-donation-form");
+const selectedCopy = document.getElementById("team-selected-copy");
+const playerSelectWrap = document.getElementById("team-player-select-wrap");
+const playerSelect = document.getElementById("team-player-select");
+const fillRemainingButton = document.getElementById("team-fill-remaining");
+const coverFeesCheckbox = document.getElementById("team-cover-fees-checkbox");
+const coverFeesCopy = document.getElementById("team-cover-fees-copy");
+const confirmDonationButton = document.getElementById("team-confirm-donation-button");
+const closeButtons = [...document.querySelectorAll("[data-team-donor-close]")];
 
-let mode = "local";
 let state = {
   team: null,
   players: [],
+  teamEquipment: [],
+  totalTeamGoal: 0,
+  totalTeamRaised: 0
 };
+let selectedMode = "team-general";
+let selectedEquipmentName = "";
 
-async function apiRequest(path) {
-  const response = await fetch(path);
+function showAction(message, isError = false) {
+  if (typeof window.showActionMessage === "function") {
+    window.showActionMessage(message, { isError });
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options
+  });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(json.error || "Request failed.");
   return json;
@@ -29,58 +58,78 @@ function progress(raised, goal) {
   return Math.min(100, Math.round((Number(raised || 0) / Number(goal || 0)) * 100));
 }
 
-function normalizeBackend(data) {
-  const team = {
-    id: data.team.id,
-    name: data.team.name,
-    location: data.team.location || "",
-    sport: data.team.sport || "",
-  };
-  const players = (data.players || []).map((p) => ({
-    id: p.id,
-    firstName: p.first_name,
-    lastName: p.last_name,
-    playerId: p.player_public_id,
-    raisedTotal: Number(p.raisedTotal || 0),
-    goalTotal: Number(p.goalTotal || 0),
-  }));
-  return { team, players };
+function centsToDollars(cents) {
+  return Number(cents || 0) / 100;
+}
+
+function dollarsToCents(dollars) {
+  return Math.round(Number(dollars || 0) * 100);
+}
+
+function estimateStripeFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.round(safeTotal * 0.029) + 30;
+}
+
+function minimumPlatformFeeCents(totalCents) {
+  const safeTotal = Math.max(0, Math.round(Number(totalCents || 0)));
+  return Math.max(Math.round(safeTotal * 0.05), estimateStripeFeeCents(safeTotal));
+}
+
+function computeCheckoutAmounts(dollars, coverFees) {
+  const baseCents = dollarsToCents(dollars);
+  if (!baseCents) {
+    return { athleteAmountCents: 0, checkoutTotalCents: 0, stripeFeeCents: 0, applicationFeeCents: 0 };
+  }
+  if (!coverFees) {
+    const stripeFeeCents = estimateStripeFeeCents(baseCents);
+    const applicationFeeCents = minimumPlatformFeeCents(baseCents);
+    return {
+      athleteAmountCents: Math.max(0, baseCents - stripeFeeCents - applicationFeeCents),
+      checkoutTotalCents: baseCents,
+      stripeFeeCents,
+      applicationFeeCents
+    };
+  }
+  let checkoutTotalCents = baseCents;
+  for (let attempts = 0; attempts < 20000; attempts += 1) {
+    const stripeFeeCents = estimateStripeFeeCents(checkoutTotalCents);
+    const minimumPlatformFee = minimumPlatformFeeCents(checkoutTotalCents);
+    if (checkoutTotalCents - stripeFeeCents - minimumPlatformFee >= baseCents) {
+      return {
+        athleteAmountCents: baseCents,
+        checkoutTotalCents,
+        stripeFeeCents,
+        applicationFeeCents: checkoutTotalCents - baseCents - stripeFeeCents
+      };
+    }
+    checkoutTotalCents += 1;
+  }
+  return { athleteAmountCents: baseCents, checkoutTotalCents: baseCents, stripeFeeCents: 0, applicationFeeCents: 0 };
 }
 
 async function loadTeam() {
   if (!teamId) throw new Error("Missing team id.");
-  try {
-    const data = await apiRequest(`/api/public/teams/${encodeURIComponent(teamId)}`);
-    mode = "backend";
-    const normalized = normalizeBackend(data);
-    state.team = normalized.team;
-    state.players = normalized.players;
-    return;
-  } catch {}
-
-  const local = api.getTeamRoster(teamId);
-  if (!local) throw new Error("Team not found.");
-  mode = "local";
-  state.team = local.team;
-  state.players = local.players;
+  const data = await apiRequest(`/api/public/teams/${encodeURIComponent(teamId)}`);
+  state.team = data.team;
+  state.players = data.players || [];
+  state.teamEquipment = data.teamEquipment || [];
+  state.totalTeamGoal = Number(data.totalTeamGoal || 0);
+  state.totalTeamRaised = Number(data.totalTeamRaised || 0);
 }
 
 function renderTop() {
   if (!teamTop || !state.team) return;
-  const totalRaised = state.players.reduce((sum, item) => sum + Number(item.raisedTotal || 0), 0);
-  const totalGoal = state.players.reduce((sum, item) => sum + Number(item.goalTotal || 0), 0);
-  const teamProgress = progress(totalRaised, totalGoal);
+  const teamProgress = progress(state.totalTeamRaised, state.totalTeamGoal);
   teamTop.innerHTML = `
     <div>
       <p class="eyebrow">Team View</p>
       <h1 class="dashboard-title">${state.team.name}</h1>
-      <p class="dashboard-copy">${state.team.location || "Location not set"}${
-    state.team.sport ? ` • ${state.team.sport}` : ""
-  }</p>
+      <p class="dashboard-copy">${state.team.location || "Location not set"}${state.team.sport ? ` • ${state.team.sport}` : ""}</p>
     </div>
     <div class="stats-row">
-      <div class="stat-pill"><span>${money(totalRaised)}</span><small>Raised</small></div>
-      <div class="stat-pill"><span>${money(totalGoal)}</span><small>Goal</small></div>
+      <div class="stat-pill"><span>${money(state.totalTeamRaised)}</span><small>Raised</small></div>
+      <div class="stat-pill"><span>${money(state.totalTeamGoal)}</span><small>Goal</small></div>
       <div class="stat-pill"><span>${teamProgress}%</span><small>Progress</small></div>
     </div>
   `;
@@ -96,28 +145,198 @@ function renderRoster() {
   state.players.forEach((player) => {
     const tr = document.createElement("tr");
     const pct = progress(player.raisedTotal, player.goalTotal);
-    const playerHref = `/player-profile.html?playerId=${encodeURIComponent(player.playerId)}`;
+    const playerHref = `/player-profile.html?playerId=${encodeURIComponent(player.player_public_id)}`;
     tr.innerHTML = `
-      <td><a class="table-name-link" href="${playerHref}">${player.firstName} ${player.lastName}</a></td>
+      <td><a class="table-name-link" href="${playerHref}">${player.first_name} ${player.last_name}</a></td>
       <td>-</td>
       <td>${money(player.raisedTotal)}</td>
       <td>${money(player.goalTotal)}</td>
-      <td>
-        <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
-      </td>
-      <td>
-        <a class="btn btn-soft btn-small" href="${playerHref}">View Player</a>
-      </td>
+      <td><div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></td>
+      <td><a class="btn btn-soft btn-small" href="${playerHref}">View Player</a></td>
     `;
     rosterBody.appendChild(tr);
   });
 }
+
+function populatePlayerSelect() {
+  if (!playerSelect) return;
+  playerSelect.innerHTML = "";
+  state.players.forEach((player) => {
+    const option = document.createElement("option");
+    option.value = player.id;
+    option.textContent = `${player.first_name} ${player.last_name}`;
+    playerSelect.appendChild(option);
+  });
+}
+
+function openDonationModal(mode, equipmentName = "") {
+  if (!donorModalBackdrop || !donationModal || !donationForm) return;
+  selectedMode = mode;
+  selectedEquipmentName = equipmentName;
+  donorModalBackdrop.hidden = false;
+  donationModal.hidden = false;
+  populatePlayerSelect();
+  if (mode === "team-general") {
+    selectedCopy.textContent = `Selected: Team General Donation • Split evenly across ${state.players.length} players`;
+    playerSelectWrap.hidden = true;
+    donationForm.amount.value = state.totalTeamGoal > 0 ? Math.min(state.totalTeamGoal, 100) : 0;
+  } else {
+    selectedCopy.textContent = `Selected: ${equipmentName} • Choose which player this gift supports`;
+    playerSelectWrap.hidden = false;
+    const item = state.teamEquipment.find((entry) => entry.name === equipmentName);
+    donationForm.amount.value = item?.goal ? Math.min(Number(item.goal || 0), 50) : 0;
+  }
+  coverFeesCheckbox.checked = true;
+  updateDonationButton();
+}
+
+function closeDonationModal() {
+  if (!donorModalBackdrop || !donationModal) return;
+  donorModalBackdrop.hidden = true;
+  donationModal.hidden = true;
+}
+
+function updateDonationButton() {
+  if (!donationForm || !confirmDonationButton) return;
+  const enteredAmount = Number(donationForm.amount.value || 0);
+  const coverFees = coverFeesCheckbox.checked === true;
+  if (!enteredAmount || enteredAmount <= 0) {
+    confirmDonationButton.textContent = "Donate";
+    coverFeesCopy.textContent = "Keeping fee coverage on helps the athlete receive the full amount you intend to give.";
+    return;
+  }
+  const totals = computeCheckoutAmounts(enteredAmount, coverFees);
+  confirmDonationButton.textContent = `Donate ${money(centsToDollars(totals.checkoutTotalCents))}`;
+  if (coverFees) {
+    coverFeesCopy.textContent = `Checkout total ${money(centsToDollars(totals.checkoutTotalCents))}. The athlete receives the full ${money(centsToDollars(totals.athleteAmountCents))} donation.`;
+  } else {
+    coverFeesCopy.textContent = `If you turn this off, the athlete receives ${money(centsToDollars(totals.athleteAmountCents))}, which is less than your intended donation after card and platform fees.`;
+  }
+}
+
+function renderTeamDonationPanel() {
+  if (!teamDonateCard || !teamGeneralDonationCard || !teamEquipmentGrid) return;
+  const coachMode = String(state.team?.recipient_mode || "coach") === "coach";
+  teamDonateCard.hidden = !coachMode;
+  if (!coachMode) return;
+  teamDonateCopy.textContent = "Select a shared team item and then choose which player you are supporting. Team general donations split evenly across the roster.";
+  const teamProgress = progress(state.totalTeamRaised, state.totalTeamGoal);
+  teamGeneralDonationCard.innerHTML = `
+    <div class="equipment-row equipment-row-general">
+      <div class="equipment-row-top">
+        <strong>General Donation</strong>
+        <span class="meta-pill meta-pill-muted">Split evenly across roster</span>
+      </div>
+      <p class="subtle-copy">${money(state.totalTeamRaised)} raised of ${money(state.totalTeamGoal)}</p>
+      <div class="progress-track"><div class="progress-fill" style="width:${teamProgress}%"></div></div>
+      <div class="equipment-actions section-top-gap-sm">
+        <span class="subtle-copy">Supports every player on this team</span>
+        <button class="btn btn-money" type="button" id="team-general-donate-button">Donate To Team Goal</button>
+      </div>
+    </div>
+  `;
+  teamEquipmentGrid.innerHTML = "";
+  state.teamEquipment.forEach((item) => {
+    if (Number(item.enabled) === 0) return;
+    const row = document.createElement("div");
+    row.className = "equipment-row";
+    row.innerHTML = `
+      <div class="equipment-row-top">
+        <strong>${item.name}</strong>
+        <span class="meta-pill meta-pill-muted">${item.category || "General"}</span>
+      </div>
+      <p class="subtle-copy">${money(item.goal)} per player</p>
+      <div class="equipment-actions section-top-gap-sm">
+        <span class="subtle-copy">Donors choose a player in the next step.</span>
+        <button class="btn btn-money" type="button" data-team-eq="${item.name}">Donate ${item.name}</button>
+      </div>
+    `;
+    teamEquipmentGrid.appendChild(row);
+  });
+}
+
+teamGeneralDonationCard?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  if (target.id !== "team-general-donate-button") return;
+  openDonationModal("team-general");
+});
+
+teamEquipmentGrid?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const equipmentName = target.dataset.teamEq;
+  if (!equipmentName) return;
+  openDonationModal("equipment", equipmentName);
+});
+
+fillRemainingButton?.addEventListener("click", () => {
+  if (!donationForm) return;
+  if (selectedMode === "team-general") {
+    donationForm.amount.value = state.totalTeamGoal;
+  } else {
+    const item = state.teamEquipment.find((entry) => entry.name === selectedEquipmentName);
+    donationForm.amount.value = Number(item?.goal || 0);
+  }
+  updateDonationButton();
+});
+
+coverFeesCheckbox?.addEventListener("change", updateDonationButton);
+donationForm?.amount?.addEventListener("input", updateDonationButton);
+closeButtons.forEach((button) => button.addEventListener("click", closeDonationModal));
+donorModalBackdrop?.addEventListener("click", (event) => {
+  if (event.target === donorModalBackdrop) closeDonationModal();
+});
+
+donationForm?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const formData = new FormData(donationForm);
+    const donationAmount = Number(formData.get("amount"));
+    const coverFees = Boolean(formData.get("coverFees"));
+    const teamGeneral = selectedMode === "team-general";
+    const selectedPlayerId = teamGeneral ? "" : String(formData.get("playerId") || "").trim();
+    if (!teamGeneral && !selectedPlayerId) {
+      throw new Error("Choose a player to receive credit for this donation.");
+    }
+    const checkout = await apiRequest("/create-checkout-session", {
+      method: "POST",
+      body: JSON.stringify({
+        teamId: state.team.id,
+        playerId: selectedPlayerId,
+        publicPlayerId: selectedPlayerId
+          ? state.players.find((player) => player.id === selectedPlayerId)?.player_public_id || ""
+          : "",
+        sourcePage: "team",
+        donationType: teamGeneral ? "team-general" : "equipment",
+        teamEquipmentName: teamGeneral ? "" : selectedEquipmentName,
+        amount: dollarsToCents(donationAmount),
+        coverFees,
+        donorName: formData.get("donorName"),
+        donorEmail: formData.get("donorEmail"),
+        donorMessage: String(formData.get("donorMessage") || "").trim(),
+        anonymous: Boolean(formData.get("anonymous"))
+      })
+    });
+    if (!checkout?.url) throw new Error("Stripe checkout did not return a redirect URL.");
+    window.location.assign(checkout.url);
+  } catch (error) {
+    showAction(error.message || "Could not start team donation.", true);
+  }
+});
 
 (async () => {
   try {
     await loadTeam();
     renderTop();
     renderRoster();
+    renderTeamDonationPanel();
+    updateDonationButton();
+    if (checkoutStatus === "success") {
+      showAction("Stripe checkout submitted. Team donation totals update after payment confirmation.");
+    } else if (checkoutStatus === "cancelled") {
+      showAction("Stripe checkout was cancelled.", true);
+    }
   } catch {
     window.location.href = "/index.html";
   }

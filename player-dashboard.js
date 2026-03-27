@@ -79,6 +79,8 @@ function normalizeBackendPlayer(player) {
     published: Number(player.published) === 1,
     stripeAccountId: String(player.stripe_account_id || ""),
     stripeOnboardingComplete: Number(player.stripe_onboarding_complete) === 1,
+    teamRecipientMode: String(player.teamRecipientMode || player.team_recipient_mode || "coach"),
+    coachName: String(player.coachName || player.coach_name || ""),
     goalTotal: Number(player.goalTotal || 0),
     raisedTotal: Number(player.raisedTotal || 0),
     equipment,
@@ -108,22 +110,29 @@ function refreshPlayer() {
   return state.player;
 }
 
+function isCoachManagedPlayer() {
+  return String(refreshPlayer()?.teamRecipientMode || "coach") === "coach";
+}
+
 async function saveProfile({ equipment, published, imageDataUrl }) {
   const current = refreshPlayer();
   if (!current) return;
+  const shouldSaveEquipment = !isCoachManagedPlayer() && Array.isArray(equipment);
   if (mode === "backend") {
     await apiRequest(`/api/players/${encodeURIComponent(current.id)}/dashboard`, {
       method: "PUT",
       body: JSON.stringify({
-        equipment: (equipment || []).map((item) => ({
-          id: item.id,
-          name: item.name,
-          category: item.category,
-          price_range: item.priceRange || item.price_range || "",
-          goal: Number(item.goal || 0),
-          raised: Number(item.raised || 0),
-          enabled: item.enabled !== false,
-        })),
+        equipment: shouldSaveEquipment
+          ? (equipment || []).map((item) => ({
+              id: item.id,
+              name: item.name,
+              category: item.category,
+              price_range: item.priceRange || item.price_range || "",
+              goal: Number(item.goal || 0),
+              raised: Number(item.raised || 0),
+              enabled: item.enabled !== false,
+            }))
+          : undefined,
         published: Boolean(published),
         imageDataUrl: String(imageDataUrl || ""),
       }),
@@ -133,7 +142,7 @@ async function saveProfile({ equipment, published, imageDataUrl }) {
   }
 
   api.savePlayerProfile(current.id, {
-    equipment: (equipment || []).map((item) => stripItemForSave(item)),
+    equipment: shouldSaveEquipment ? (equipment || []).map((item) => stripItemForSave(item)) : undefined,
     published: Boolean(published),
     imageDataUrl: String(imageDataUrl || ""),
   });
@@ -208,6 +217,7 @@ function renderStats(p) {
 function renderEquipment() {
   if (!equipmentList) return;
   equipmentList.innerHTML = "";
+  const coachManaged = String(state.team?.recipientMode || refreshPlayer()?.teamRecipientMode || "coach") === "coach";
   if (!draftEquipment.length) {
     equipmentList.innerHTML = "<p>No equipment configured yet. Add an item below.</p>";
     return;
@@ -222,10 +232,10 @@ function renderEquipment() {
     row.innerHTML = `
       <div class="equipment-row-top">
         <label class="toggle-label compact-toggle">
-          <input type="checkbox" data-field="enabled" ${item.enabled ? "checked" : ""} />
+          <input type="checkbox" data-field="enabled" ${item.enabled ? "checked" : ""} ${coachManaged ? "disabled" : ""} />
           Public profile
         </label>
-        <button class="btn btn-danger-ghost btn-small" type="button" data-remove-index="${index}">
+        <button class="btn btn-danger-ghost btn-small" type="button" data-remove-index="${index}" ${coachManaged ? "disabled" : ""}>
           Remove
         </button>
       </div>
@@ -233,14 +243,14 @@ function renderEquipment() {
       <div class="equipment-main">
         <label class="equipment-name">
           <span class="field-caption">Equipment</span>
-          <input type="text" data-field="name" value="${item.name}" placeholder="Equipment name" />
+          <input type="text" data-field="name" value="${item.name}" placeholder="Equipment name" ${coachManaged ? "disabled" : ""} />
         </label>
         <label class="equipment-goal">
           <span class="field-caption">Goal</span>
           <div class="goal-input-wrap">
             <span>$</span>
             <input type="number" min="0" step="1" data-field="goal" value="${item.goal}" ${
-      item.enabled ? "" : "disabled"
+      item.enabled && !coachManaged ? "" : "disabled"
     } />
           </div>
         </label>
@@ -273,6 +283,16 @@ function renderPublishButton(p) {
 
 function renderPayoutButton(p) {
   if (!payoutsButton) return;
+  const coachManaged = String(p?.teamRecipientMode || "coach") === "coach";
+  payoutsButton.hidden = coachManaged;
+  if (stripeDashboardButton) stripeDashboardButton.hidden = coachManaged || !p?.stripeAccountId;
+  if (coachManaged) {
+    if (equipmentFeedback) {
+      equipmentFeedback.textContent = `${p.coachName || "Your coach"} collects donations for this team and sets shared equipment pricing.`;
+      equipmentFeedback.classList.remove("is-error");
+    }
+    return;
+  }
   const complete = Boolean(p?.stripeOnboardingComplete);
   payoutsButton.textContent = complete ? "Payment Setup Complete" : "Set Up Payments";
   payoutsButton.disabled = complete;
@@ -354,6 +374,9 @@ function buildChangeSummary(currentEquipment, nextEquipment) {
 function render() {
   const current = refreshPlayer();
   if (!current) return;
+  if (addEquipmentButton) {
+    addEquipmentButton.hidden = String(current.teamRecipientMode || "coach") === "coach";
+  }
   nameHeading.textContent = `${current.firstName} ${current.lastName} Dashboard`;
   teamCopy.textContent = state.team?.name || "";
   renderStats(current);

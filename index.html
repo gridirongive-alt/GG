@@ -130,7 +130,58 @@
         </div>
       </section>
 
-      <section class="modal" id="create-account-modal" role="dialog" aria-modal="true" aria-labelledby="create-account-title" hidden>
+      <section class="modal modal-wide" id="coach-payout-modal" role="dialog" aria-modal="true" aria-labelledby="coach-payout-title" hidden>
+        <div class="modal-header">
+          <h2 id="coach-payout-title">Choose How Donations Are Received</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
+        </div>
+        <p class="subtle-copy">
+          Before creating your manager account, choose how your team wants donations to be paid out.
+          You can update this later, but it is easiest to choose the right setup from the start.
+        </p>
+        <div class="choice-stack section-top-gap-sm">
+          <article class="payout-choice-card is-recommended">
+            <div class="payout-choice-head">
+              <div>
+                <p class="eyebrow">Recommended</p>
+                <h3>Coach Receives Donations</h3>
+              </div>
+              <button class="btn btn-primary" type="button" data-select-coach-mode="coach">Choose This Setup</button>
+            </div>
+            <p class="subtle-copy">
+              Best for youth teams. The coach connects Stripe once, collects funds on behalf of players,
+              and donors still choose which player they want to support.
+            </p>
+            <ul class="choice-points">
+              <li>Best option when players may be under 18.</li>
+              <li>Only one Stripe setup for the team.</li>
+              <li>Coach controls shared pricing and can track every donation by player.</li>
+            </ul>
+            <p class="choice-caution">Tradeoff: the coach, not each player, receives the Stripe payouts.</p>
+          </article>
+
+          <article class="payout-choice-card">
+            <div class="payout-choice-head">
+              <div>
+                <p class="eyebrow">Individual Payouts</p>
+                <h3>Players Receive Donations Individually</h3>
+              </div>
+              <button class="btn btn-soft" type="button" data-select-coach-mode="player">Choose This Setup</button>
+            </div>
+            <p class="subtle-copy">
+              Use this only if each player can comfortably complete Stripe onboarding and receive funds personally.
+            </p>
+            <ul class="choice-points">
+              <li>Each player controls their own Stripe account and payouts.</li>
+              <li>Works best for older athletes with no onboarding restrictions.</li>
+              <li>Each player can manage their own fundraising flow end-to-end.</li>
+            </ul>
+            <p class="choice-caution">Tradeoff: minors can run into Stripe onboarding limitations.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="modal modal-wide" id="create-account-modal" role="dialog" aria-modal="true" aria-labelledby="create-account-title" hidden>
         <div class="modal-header">
           <h2 id="create-account-title">Create an Account</h2>
           <button class="icon-btn" type="button" aria-label="Close modal" data-close-modal>&times;</button>
@@ -143,6 +194,16 @@
 
         <div class="tab-panel is-active" id="coach-signup" role="tabpanel">
           <form class="modal-form" id="coach-signup-form">
+            <input type="hidden" name="recipientMode" id="coach-recipient-mode-input" value="coach" />
+            <div class="selected-setup-banner">
+              <div>
+                <strong id="coach-setup-mode-label">Coach receives donations</strong>
+                <p class="subtle-copy" id="coach-setup-mode-copy">
+                  Recommended for youth teams. You can go back and change this before creating the account.
+                </p>
+              </div>
+              <button class="btn btn-soft btn-small" type="button" id="change-coach-payout-mode">Change</button>
+            </div>
             <label>
               Name
               <input type="text" name="coachName" required />

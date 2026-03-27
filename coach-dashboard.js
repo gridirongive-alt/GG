@@ -15,12 +15,24 @@ const csvProcessingBackdrop = document.getElementById("csv-processing-backdrop")
 const logoutButton = document.getElementById("coach-logout");
 const previewCard = document.getElementById("player-preview-card");
 const previewContent = document.getElementById("player-preview-content");
+const coachSetupPayoutsButton = document.getElementById("coach-setup-payouts");
+const coachStripeDashboardButton = document.getElementById("coach-open-stripe-dashboard");
+const coachPayoutActions = document.getElementById("coach-payout-actions");
+const coachPayoutCopy = document.getElementById("coach-payout-copy");
+const sharedEquipmentCard = document.getElementById("shared-equipment-card");
+const sharedEquipmentList = document.getElementById("shared-equipment-list");
+const sharedEquipmentAddButton = document.getElementById("shared-equipment-add");
+const sharedEquipmentSaveButton = document.getElementById("shared-equipment-save");
+const transactionsCard = document.getElementById("coach-transactions-card");
+const transactionsBody = document.getElementById("coach-transactions-body");
 
 let state = {
   mode: "local",
   coach: null,
   team: null,
-  players: []
+  players: [],
+  teamEquipment: [],
+  transactions: []
 };
 let csvPreviewRows = [];
 
@@ -87,7 +99,115 @@ function updateTeamForm() {
   teamForm.teamName.value = state.team.name || "";
   teamForm.teamLocation.value = state.team.location || "";
   teamForm.teamSport.value = state.team.sport || "";
+  const recipientMode = String(state.team.recipient_mode || state.team.recipientMode || "coach");
+  const recipientInput = teamForm.querySelector(`input[name="recipientMode"][value="${recipientMode}"]`);
+  if (recipientInput) recipientInput.checked = true;
   attentionSetupFields();
+}
+
+function isCoachRecipientMode() {
+  return String(state.team?.recipient_mode || state.team?.recipientMode || "coach") === "coach";
+}
+
+function renderCoachPayoutSection() {
+  if (!coachPayoutActions || !coachPayoutCopy) return;
+  const show = state.mode === "backend" && isCoachRecipientMode();
+  coachPayoutActions.hidden = !show;
+  coachPayoutCopy.hidden = !show;
+  if (!show) return;
+  const connected = Boolean(state.coach?.stripe_account_id);
+  const complete = Number(state.coach?.stripe_onboarding_complete || 0) === 1;
+  coachSetupPayoutsButton.textContent = complete ? "Team Stripe Connected" : "Connect Team Stripe";
+  coachStripeDashboardButton.hidden = !connected;
+  coachPayoutCopy.textContent = complete
+    ? "Team Stripe setup is complete. Donations for players on this team route to the connected coach account."
+    : "Connect Stripe for the team so donor payments can route to the coach on behalf of selected players.";
+}
+
+function renderTransactions() {
+  if (!transactionsCard || !transactionsBody) return;
+  const show = isCoachRecipientMode();
+  transactionsCard.hidden = !show;
+  if (!show) return;
+  const rows = Array.isArray(state.transactions) ? state.transactions : [];
+  transactionsBody.innerHTML = "";
+  if (!rows.length) {
+    transactionsBody.innerHTML = '<tr><td colspan="6" class="subtle-copy">No team transactions yet.</td></tr>';
+    return;
+  }
+  rows.forEach((row) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${String(row.created_at || "").slice(0, 10) || "-"}</td>
+      <td>${row.first_name || ""} ${row.last_name || ""}</td>
+      <td>${row.equipment_name || "General Donation"}</td>
+      <td>$${Number(row.amount || 0).toFixed(2)}</td>
+      <td>$${Number(row.checkout_total_amount || 0).toFixed(2)}</td>
+      <td>$${Number(row.application_fee_amount || 0).toFixed(2)}</td>
+    `;
+    transactionsBody.appendChild(tr);
+  });
+}
+
+function renderSharedEquipment() {
+  if (!sharedEquipmentCard || !sharedEquipmentList) return;
+  const show = isCoachRecipientMode();
+  sharedEquipmentCard.hidden = !show;
+  if (!show) return;
+  sharedEquipmentList.innerHTML = "";
+  const rows = Array.isArray(state.teamEquipment) ? state.teamEquipment : [];
+  if (!rows.length) {
+    sharedEquipmentList.innerHTML = "<p class=\"subtle-copy\">No shared equipment pricing yet.</p>";
+    return;
+  }
+  rows.forEach((item, index) => {
+    const row = document.createElement("div");
+    row.className = "equipment-row";
+    row.innerHTML = `
+      <div class="equipment-row-top">
+        <label class="toggle-label compact-toggle">
+          <input type="checkbox" data-shared-field="enabled" data-index="${index}" ${
+            Number(item.enabled) === 0 ? "" : "checked"
+          } />
+          Active for roster
+        </label>
+        <button class="btn btn-danger-ghost btn-small" type="button" data-remove-shared="${index}">Remove</button>
+      </div>
+      <div class="equipment-main">
+        <label class="equipment-name">
+          <span class="field-caption">Equipment</span>
+          <input type="text" data-shared-field="name" data-index="${index}" value="${String(item.name || "").replace(/"/g, "&quot;")}" />
+        </label>
+        <label class="equipment-goal">
+          <span class="field-caption">Goal</span>
+          <div class="goal-input-wrap">
+            <span>$</span>
+            <input type="number" min="0" step="1" data-shared-field="goal" data-index="${index}" value="${Number(item.goal || 0)}" />
+          </div>
+        </label>
+      </div>
+      <div class="equipment-footer">
+        <div class="equipment-meta">
+          <span class="meta-pill">${item.category || "General"}</span>
+          <span class="meta-pill meta-pill-muted">Typical price: ${item.price_range || item.priceRange || "Not set"}</span>
+        </div>
+      </div>
+    `;
+    sharedEquipmentList.appendChild(row);
+  });
+}
+
+async function refreshCoachStripeStatus() {
+  if (state.mode !== "backend" || !state.coach?.stripe_account_id) return;
+  try {
+    const status = await apiRequest("/api/stripe/coach-status", {
+      method: "POST",
+      body: JSON.stringify({ coachId: state.coach.id })
+    });
+    state.coach.stripe_account_id = String(status.stripe_account_id || state.coach.stripe_account_id || "");
+    state.coach.stripe_onboarding_complete = Boolean(status.onboarding_complete) ? 1 : 0;
+    renderCoachPayoutSection();
+  } catch {}
 }
 
 function parseCsv(text) {
@@ -274,7 +394,9 @@ async function loadBackendDashboard() {
     mode: "backend",
     coach: data.coach,
     team: data.team,
-    players: data.players || []
+    players: data.players || [],
+    teamEquipment: data.teamEquipment || [],
+    transactions: data.transactions || []
   };
 }
 
@@ -285,7 +407,9 @@ function loadLocalDashboard() {
     mode: "local",
     coach: bundle.coach,
     team: bundle.team,
-    players: api.playersForTeam(bundle.team.id)
+    players: api.playersForTeam(bundle.team.id),
+    teamEquipment: [],
+    transactions: []
   };
 }
 
@@ -304,6 +428,8 @@ async function loadDashboard() {
 teamForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const chosenSport = String(teamForm.teamSport.value || "").trim().toLowerCase();
+  const chosenRecipientMode =
+    String(teamForm.querySelector('input[name="recipientMode"]:checked')?.value || "coach").trim().toLowerCase();
   if (!chosenSport) {
     setFeedback("team-feedback", "Please select a sport before saving.", true);
     teamForm.teamSport.classList.add("attention-field");
@@ -316,7 +442,8 @@ teamForm?.addEventListener("submit", async (event) => {
         body: JSON.stringify({
           name: teamForm.teamName.value,
           location: teamForm.teamLocation.value,
-          sport: chosenSport
+          sport: chosenSport,
+          recipientMode: chosenRecipientMode
         })
       });
       await loadBackendDashboard();
@@ -332,6 +459,9 @@ teamForm?.addEventListener("submit", async (event) => {
     showAction("Team profile saved.");
     updateTeamForm();
     renderRoster();
+    renderCoachPayoutSection();
+    renderSharedEquipment();
+    renderTransactions();
   } catch (error) {
     setFeedback("team-feedback", error.message || "Could not save team profile.", true);
     showAction(error.message || "Could not save team profile.", true);
@@ -553,6 +683,106 @@ rosterBody?.addEventListener("click", async (event) => {
   }
 });
 
+sharedEquipmentList?.addEventListener("input", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  const field = target.dataset.sharedField;
+  const index = Number(target.dataset.index);
+  if (!field || Number.isNaN(index) || !state.teamEquipment[index]) return;
+  if (field === "enabled") {
+    state.teamEquipment[index].enabled = target.checked ? 1 : 0;
+    return;
+  }
+  if (field === "goal") {
+    state.teamEquipment[index].goal = Number(target.value || 0);
+    return;
+  }
+  state.teamEquipment[index][field] = target.value;
+});
+
+sharedEquipmentList?.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
+  const removeIndex = target.dataset.removeShared;
+  if (removeIndex === undefined) return;
+  state.teamEquipment.splice(Number(removeIndex), 1);
+  renderSharedEquipment();
+});
+
+sharedEquipmentAddButton?.addEventListener("click", () => {
+  state.teamEquipment.push({
+    id: "",
+    name: "New Team Item",
+    category: "General",
+    price_range: "",
+    goal: 0,
+    enabled: 1
+  });
+  renderSharedEquipment();
+});
+
+sharedEquipmentSaveButton?.addEventListener("click", async () => {
+  if (state.mode !== "backend" || !state.team) return;
+  try {
+    await apiRequest(`/api/teams/${encodeURIComponent(state.team.id)}/shared-equipment`, {
+      method: "PUT",
+      body: JSON.stringify({ items: state.teamEquipment })
+    });
+    await loadBackendDashboard();
+    renderSharedEquipment();
+    renderRoster();
+    renderTransactions();
+    setFeedback("shared-equipment-feedback", "Team pricing saved and synced across the roster.");
+    showAction("Team pricing saved and synced across the roster.");
+  } catch (error) {
+    setFeedback("shared-equipment-feedback", error.message || "Could not save team pricing.", true);
+    showAction(error.message || "Could not save team pricing.", true);
+  }
+});
+
+coachSetupPayoutsButton?.addEventListener("click", async () => {
+  if (state.mode !== "backend" || !state.coach) return;
+  try {
+    const newWindow = window.open("", "_blank", "noopener");
+    if (newWindow) {
+      newWindow.document.write(
+        "<!doctype html><title>Redirecting…</title><body style='font-family:Arial,sans-serif;padding:24px'>Redirecting to Stripe…</body>"
+      );
+      newWindow.document.close();
+    }
+    const response = await apiRequest("/onboard-coach", {
+      method: "POST",
+      body: JSON.stringify({ coachId: state.coach.id })
+    });
+    if (newWindow) newWindow.location.assign(response.url);
+    await loadBackendDashboard();
+    renderCoachPayoutSection();
+  } catch (error) {
+    showAction(error.message || "Could not start coach Stripe setup.", true);
+  }
+});
+
+coachStripeDashboardButton?.addEventListener("click", async () => {
+  if (state.mode !== "backend" || !state.coach) return;
+  try {
+    const response = await apiRequest("/stripe/dashboard-link", {
+      method: "POST",
+      body: JSON.stringify({ role: "coach", coachId: state.coach.id })
+    });
+    window.open(response.url, "_blank", "noopener");
+  } catch (error) {
+    showAction(error.message || "Could not open Stripe dashboard.", true);
+  }
+});
+
+window.addEventListener("focus", () => {
+  refreshCoachStripeStatus();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshCoachStripeStatus();
+});
+
 logoutButton?.addEventListener("click", () => {
   api.clearSession();
   window.location.href = "/index.html";
@@ -563,6 +793,9 @@ logoutButton?.addEventListener("click", () => {
     await loadDashboard();
     updateTeamForm();
     renderRoster();
+    renderCoachPayoutSection();
+    renderSharedEquipment();
+    renderTransactions();
   } catch {
     window.location.href = "/index.html";
   }

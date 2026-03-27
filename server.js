@@ -362,9 +362,10 @@ async function sendRecoveryEmail({ to, recoveryKeyValue, role }) {
   });
 }
 
-async function sendRosterInviteEmail({ to, teamName, coachName, playerPublicId }) {
+async function sendRosterInviteEmail({ to, teamName, coachName, playerPublicId, recipientMode = "coach" }) {
   const setupLink = publicSiteUrl;
   const dashboardLink = `${appBaseUrl}/player-dashboard.html`;
+  const coachManaged = String(recipientMode || "coach") === "coach";
   const html = `
     <h2>Welcome to Gridiron Give</h2>
     <p>Your coach has added you to the <strong>${teamName}</strong> roster.</p>
@@ -375,11 +376,14 @@ async function sendRosterInviteEmail({ to, teamName, coachName, playerPublicId }
     <h3>How to Use Your Player Dashboard</h3>
     <ol>
       <li>Sign up with your Player ID and create your password.</li>
-      <li>Set up your equipment list and donation goal amounts.</li>
-      <li>Turn off items you do not need so donors only see relevant gear.</li>
-      <li>Save your goals to publish your page for donors.</li>
+      <li>${coachManaged ? "Upload your photo and publish your page so donors can find you." : "Set up your equipment list and donation goal amounts."}</li>
+      <li>${coachManaged ? "Your coach manages shared equipment pricing and receives donations on behalf of players." : "Turn off items you do not need so donors only see relevant gear."}</li>
+      <li>${coachManaged ? "You do not need to connect Stripe personally for this team setup." : "Save your goals to publish your page for donors."}</li>
     </ol>
-    <h3>Stripe Payout Setup</h3>
+    ${
+      coachManaged
+        ? `<p><strong>Stripe Payout Setup:</strong> Your coach handles Stripe collections for this team, so you do not need to complete personal payout setup.</p>`
+        : `<h3>Stripe Payout Setup</h3>
     <ol>
       <li>Open your player dashboard after signup: <a href="${dashboardLink}">${dashboardLink}</a></li>
       <li>Click <strong>Set Up Payouts</strong> and read the Stripe instructions carefully.</li>
@@ -391,7 +395,8 @@ async function sendRosterInviteEmail({ to, teamName, coachName, playerPublicId }
       <li>Do not change Stripe's business framing, description, or account-type direction during setup.</li>
       <li>Finish every required Stripe step before returning to Gridiron Give.</li>
     </ol>
-    <p><strong>Important:</strong> After Stripe setup is complete, come back to your dashboard and confirm it shows <strong>Payment Setup Complete</strong>.</p>
+    <p><strong>Important:</strong> After Stripe setup is complete, come back to your dashboard and confirm it shows <strong>Payment Setup Complete</strong>.</p>`
+    }
     <p>Tip: Ask your coach for realistic target prices so your totals are accurate for donors.</p>
   `;
   if (!transporter) {
@@ -510,8 +515,150 @@ function listEnabledItemsWithRemaining(playerId) {
     }));
 }
 
+function teamEquipmentTemplateRows(teamId) {
+  return db
+    .prepare(
+      `SELECT id, team_id, name, category, price_range, goal, enabled, sort_order
+       FROM team_equipment_templates
+       WHERE team_id=?
+       ORDER BY sort_order ASC, rowid ASC`
+    )
+    .all(teamId);
+}
+
+function ensureTeamSharedEquipmentTemplates(team) {
+  if (!team?.id) return [];
+  let rows = teamEquipmentTemplateRows(team.id);
+  if (rows.length) return rows;
+  const templates = equipmentTemplateForSport(team.sport);
+  const tx = db.transaction(() => {
+    templates.forEach((row, index) => {
+      db.prepare(
+        `INSERT INTO team_equipment_templates
+        (id, team_id, name, category, price_range, goal, enabled, sort_order)
+        VALUES (?, ?, ?, ?, ?, 0, 1, ?)`
+      ).run(uid("teq"), team.id, row[0], row[1], row[2], index);
+    });
+  });
+  tx();
+  rows = teamEquipmentTemplateRows(team.id);
+  return rows;
+}
+
+function syncTeamSharedEquipmentToPlayers(teamId) {
+  const templates = teamEquipmentTemplateRows(teamId);
+  if (!templates.length) return;
+  const players = db.prepare("SELECT id FROM players WHERE team_id=?").all(teamId);
+  const tx = db.transaction(() => {
+    players.forEach((player) => {
+      const existingRows = db
+        .prepare("SELECT id, name, category, raised FROM equipment_items WHERE player_id=?")
+        .all(player.id);
+      const raisedByKey = new Map(
+        existingRows.map((row) => [
+          `${String(row.name || "").trim().toLowerCase()}::${String(row.category || "").trim().toLowerCase()}`,
+          Number(row.raised || 0)
+        ])
+      );
+      db.prepare("DELETE FROM equipment_items WHERE player_id=?").run(player.id);
+      templates.forEach((item, index) => {
+        const key = `${String(item.name || "").trim().toLowerCase()}::${String(item.category || "")
+          .trim()
+          .toLowerCase()}`;
+        const raised = raisedByKey.get(key) || 0;
+        if (hasEquipmentSortOrder) {
+          db.prepare(
+            `INSERT INTO equipment_items
+            (id, player_id, name, category, price_range, goal, raised, enabled, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            uid("eq"),
+            player.id,
+            String(item.name || "Equipment"),
+            String(item.category || "General"),
+            String(item.price_range || ""),
+            Number(item.goal || 0),
+            raised,
+            Number(item.enabled) === 0 ? 0 : 1,
+            Number(item.sort_order ?? index)
+          );
+          return;
+        }
+        db.prepare(
+          `INSERT INTO equipment_items
+          (id, player_id, name, category, price_range, goal, raised, enabled)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          uid("eq"),
+          player.id,
+          String(item.name || "Equipment"),
+          String(item.category || "General"),
+          String(item.price_range || ""),
+          Number(item.goal || 0),
+          raised,
+          Number(item.enabled) === 0 ? 0 : 1
+        );
+      });
+    });
+  });
+  tx();
+}
+
+function payoutContextForPlayer(playerId) {
+  const row = db
+    .prepare(
+      `SELECT
+        p.id AS player_id,
+        p.first_name,
+        p.last_name,
+        p.email AS player_email,
+        p.stripe_account_id AS player_stripe_account_id,
+        p.stripe_onboarding_complete AS player_stripe_onboarding_complete,
+        t.id AS team_id,
+        t.name AS team_name,
+        t.recipient_mode,
+        c.id AS coach_id,
+        c.name AS coach_name,
+        c.email AS coach_email,
+        c.stripe_account_id AS coach_stripe_account_id,
+        c.stripe_onboarding_complete AS coach_stripe_onboarding_complete
+       FROM players p
+       JOIN teams t ON t.id = p.team_id
+       JOIN coaches c ON c.id = t.coach_id
+       WHERE p.id=?`
+    )
+    .get(playerId);
+  if (!row) return null;
+  const recipientMode = String(row.recipient_mode || "coach");
+  const recipientType = recipientMode === "coach" ? "coach" : "player";
+  const recipientId = recipientType === "coach" ? row.coach_id : row.player_id;
+  const stripeAccountId =
+    recipientType === "coach"
+      ? String(row.coach_stripe_account_id || "")
+      : String(row.player_stripe_account_id || "");
+  const onboardingComplete =
+    recipientType === "coach"
+      ? Number(row.coach_stripe_onboarding_complete) === 1
+      : Number(row.player_stripe_onboarding_complete) === 1;
+  return {
+    playerId: row.player_id,
+    playerName: `${row.first_name || ""} ${row.last_name || ""}`.trim(),
+    playerEmail: String(row.player_email || ""),
+    teamId: row.team_id,
+    teamName: String(row.team_name || ""),
+    recipientMode,
+    recipientType,
+    recipientId,
+    recipientName: recipientType === "coach" ? String(row.coach_name || "") : `${row.first_name || ""} ${row.last_name || ""}`.trim(),
+    recipientEmail: recipientType === "coach" ? String(row.coach_email || "") : String(row.player_email || ""),
+    stripeAccountId,
+    onboardingComplete
+  };
+}
+
 function applyDonationToDatabase({
   playerId,
+  teamId = "",
   donationType,
   equipmentItemId,
   donorName,
@@ -519,6 +666,9 @@ function applyDonationToDatabase({
   donorMessage,
   anonymous,
   amount,
+  payoutRecipientType = "",
+  payoutRecipientId = "",
+  stripeDestinationAccountId = "",
   stripeCheckoutSessionId = "",
   stripePaymentIntentId = "",
   stripeChargeId = "",
@@ -537,6 +687,54 @@ function applyDonationToDatabase({
   if (value <= 0) {
     throw new Error("Amount must be greater than zero.");
   }
+
+  if (donationType === "team-general") {
+    const safeTeamId = String(teamId || "").trim();
+    if (!safeTeamId) throw new Error("Team is required for general team donation.");
+    const players = db.prepare("SELECT id FROM players WHERE team_id=? ORDER BY first_name, last_name").all(safeTeamId);
+    if (!players.length) throw new Error("No players are available for this team donation.");
+    const totalCents = Math.round(value * 100);
+    const baseShare = Math.floor(totalCents / players.length);
+    const remainder = totalCents % players.length;
+    const results = [];
+    players.forEach((player, index) => {
+      const shareCents = baseShare + (index < remainder ? 1 : 0);
+      if (shareCents <= 0) return;
+      results.push(
+        applyDonationToDatabase({
+          playerId: player.id,
+          teamId: safeTeamId,
+          donationType: "general",
+          donorName,
+          donorEmail,
+          donorMessage,
+          anonymous,
+          amount: shareCents / 100,
+          payoutRecipientType,
+          payoutRecipientId,
+          stripeDestinationAccountId,
+          stripeCheckoutSessionId,
+          stripePaymentIntentId,
+          stripeChargeId,
+          checkoutTotalAmount,
+          applicationFeeAmount
+        })
+      );
+    });
+    return {
+      donationIds: results.flatMap((entry) => entry.donationIds || (entry.donationId ? [entry.donationId] : [])),
+      amount: value
+    };
+  }
+
+  const payoutContext = payoutContextForPlayer(playerId);
+  if (!payoutContext) {
+    throw new Error("Player not found for donation.");
+  }
+  const donationTeamId = String(teamId || payoutContext.teamId || "").trim();
+  const donationRecipientType = String(payoutRecipientType || payoutContext.recipientType || "player");
+  const donationRecipientId = String(payoutRecipientId || payoutContext.recipientId || "").trim();
+  const destinationAccountId = String(stripeDestinationAccountId || payoutContext.stripeAccountId || "").trim();
 
   const enabledItems = listEnabledItemsWithRemaining(playerId);
 
@@ -571,12 +769,14 @@ function applyDonationToDatabase({
         db.prepare(
           `INSERT INTO donations
           (
-            id, player_id, equipment_item_id, donor_name, donor_email, donor_message, anonymous, amount,
+            id, team_id, player_id, equipment_item_id, donor_name, donor_email, donor_message, anonymous, amount,
+            payout_recipient_type, payout_recipient_id, stripe_destination_account_id,
             stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, checkout_total_amount, application_fee_amount
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           donationId,
+          donationTeamId,
           playerId,
           item.id,
           safeDonorName,
@@ -584,6 +784,9 @@ function applyDonationToDatabase({
           safeDonorMessage,
           anonymous ? 1 : 0,
           applied,
+          donationRecipientType,
+          donationRecipientId,
+          destinationAccountId,
           String(stripeCheckoutSessionId || ""),
           String(stripePaymentIntentId || ""),
           String(stripeChargeId || ""),
@@ -622,12 +825,14 @@ function applyDonationToDatabase({
     db.prepare(
       `INSERT INTO donations
       (
-        id, player_id, equipment_item_id, donor_name, donor_email, donor_message, anonymous, amount,
+        id, team_id, player_id, equipment_item_id, donor_name, donor_email, donor_message, anonymous, amount,
+        payout_recipient_type, payout_recipient_id, stripe_destination_account_id,
         stripe_checkout_session_id, stripe_payment_intent_id, stripe_charge_id, checkout_total_amount, application_fee_amount
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       donationId,
+      donationTeamId,
       playerId,
       equipmentItemId,
       safeDonorName,
@@ -635,6 +840,9 @@ function applyDonationToDatabase({
       safeDonorMessage,
       anonymous ? 1 : 0,
       value,
+      donationRecipientType,
+      donationRecipientId,
+      destinationAccountId,
       String(stripeCheckoutSessionId || ""),
       String(stripePaymentIntentId || ""),
       String(stripeChargeId || ""),
@@ -758,6 +966,28 @@ function ensureStripePlayerAccount(player) {
   });
 }
 
+function ensureStripeCoachAccount(coach, team) {
+  return stripe.accounts.create({
+    type: "express",
+    country: "US",
+    email: normalizeEmail(coach.email),
+    business_type: "individual",
+    business_profile: {
+      product_description: `${team?.name || "Team"} youth sports fundraising collections on Gridiron Give`
+    },
+    capabilities: {
+      card_payments: { requested: true },
+      transfers: { requested: true }
+    },
+    metadata: {
+      coachId: coach.id,
+      coachName: String(coach.name || "").trim(),
+      teamId: team?.id || "",
+      teamName: String(team?.name || "").trim()
+    }
+  });
+}
+
 async function syncStripePlayerAccountCapabilities({ stripeAccountId, player }) {
   if (!stripeAccountId) return null;
   const updatePayload = {
@@ -775,6 +1005,26 @@ async function syncStripePlayerAccountCapabilities({ stripeAccountId, player }) 
       playerName: `${player.first_name || ""} ${player.last_name || ""}`.trim()
     };
   }
+  return stripe.accounts.update(stripeAccountId, updatePayload);
+}
+
+async function syncStripeCoachAccountCapabilities({ stripeAccountId, coach, team }) {
+  if (!stripeAccountId) return null;
+  const updatePayload = {
+    capabilities: {
+      card_payments: { requested: true },
+      transfers: { requested: true }
+    }
+  };
+  if (coach?.email) {
+    updatePayload.email = normalizeEmail(coach.email);
+  }
+  updatePayload.metadata = {
+    coachId: coach?.id || "",
+    coachName: String(coach?.name || "").trim(),
+    teamId: team?.id || "",
+    teamName: String(team?.name || "").trim()
+  };
   return stripe.accounts.update(stripeAccountId, updatePayload);
 }
 
@@ -805,6 +1055,34 @@ async function createOrLoadStripeAccountId({ playerId, stripeAccountId }) {
   }
 
   return { stripeAccountId: nextStripeAccountId, player };
+}
+
+async function createOrLoadCoachStripeAccountId({ coachId, stripeAccountId }) {
+  const coach = coachId
+    ? db.prepare("SELECT id, name, email, stripe_account_id FROM coaches WHERE id=?").get(coachId)
+    : null;
+  const team = coachId ? db.prepare("SELECT id, name FROM teams WHERE coach_id=?").get(coachId) : null;
+
+  if (stripeAccountId) {
+    return { stripeAccountId: String(stripeAccountId).trim(), coach, team };
+  }
+  if (!coach) {
+    throw new Error("Coach not found.");
+  }
+
+  let nextStripeAccountId = String(coach.stripe_account_id || "").trim();
+  if (!nextStripeAccountId) {
+    const account = await ensureStripeCoachAccount(coach, team);
+    nextStripeAccountId = account.id;
+    db.prepare("UPDATE coaches SET stripe_account_id=?, stripe_onboarding_complete=0 WHERE id=?").run(
+      nextStripeAccountId,
+      coach.id
+    );
+  } else {
+    await syncStripeCoachAccountCapabilities({ stripeAccountId: nextStripeAccountId, coach, team });
+  }
+
+  return { stripeAccountId: nextStripeAccountId, coach, team };
 }
 
 async function onboardPlayerHandler(req, res) {
@@ -923,9 +1201,102 @@ app.post("/api/stripe/player-status", async (req, res) => {
   }
 });
 
+async function onboardCoachHandler(req, res) {
+  if (!stripe) {
+    return res.status(500).json({ error: "Stripe is not configured yet." });
+  }
+
+  const coachId = String(req.body?.coachId || "").trim();
+  const incomingStripeAccountId = String(req.body?.stripe_account_id || "").trim();
+  if (!coachId && !incomingStripeAccountId) {
+    return res.status(400).json({ error: "Coach id or stripe_account_id is required." });
+  }
+
+  try {
+    const { stripeAccountId } = await createOrLoadCoachStripeAccountId({
+      coachId,
+      stripeAccountId: incomingStripeAccountId
+    });
+    const accountLink = await stripe.accountLinks.create({
+      account: stripeAccountId,
+      refresh_url: `${appBaseUrl}/coach-dashboard.html?stripe=refresh`,
+      return_url: `${appBaseUrl}/coach-dashboard.html`,
+      type: "account_onboarding"
+    });
+    return res.json({ ok: true, url: accountLink.url, stripeAccountId });
+  } catch (error) {
+    return res.status(500).json({ error: error?.message || "Could not start coach Stripe onboarding." });
+  }
+}
+
+app.post("/api/stripe/onboard-coach", onboardCoachHandler);
+app.post("/onboard-coach", onboardCoachHandler);
+
+app.post("/api/stripe/coach-status", async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ error: "Stripe is not configured yet." });
+  }
+
+  const coachId = String(req.body?.coachId || "").trim();
+  if (!coachId) {
+    return res.status(400).json({ error: "Coach id is required." });
+  }
+  const coach = db.prepare("SELECT id, stripe_account_id FROM coaches WHERE id=?").get(coachId);
+  if (!coach) {
+    return res.status(404).json({ error: "Coach not found." });
+  }
+  const stripeAccountId = String(coach.stripe_account_id || "").trim();
+  if (!stripeAccountId) {
+    db.prepare("UPDATE coaches SET stripe_onboarding_complete=0 WHERE id=?").run(coachId);
+    return res.json({ stripe_account_id: "", onboarding_complete: false });
+  }
+  try {
+    const account = await stripe.accounts.retrieve(stripeAccountId);
+    const onboardingComplete = Boolean(account.details_submitted);
+    const transfersCapability = String(account.capabilities?.transfers || "");
+    const cardPaymentsCapability = String(account.capabilities?.card_payments || "");
+    db.prepare("UPDATE coaches SET stripe_onboarding_complete=? WHERE id=?").run(
+      onboardingComplete ? 1 : 0,
+      coachId
+    );
+    return res.json({
+      stripe_account_id: stripeAccountId,
+      onboarding_complete: onboardingComplete,
+      transfers_capability: transfersCapability,
+      card_payments_capability: cardPaymentsCapability,
+      payouts_enabled: Boolean(account.payouts_enabled),
+      charges_enabled: Boolean(account.charges_enabled)
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error?.message || "Could not refresh coach Stripe status." });
+  }
+});
+
 async function createStripeDashboardLinkHandler(req, res) {
   if (!stripe) {
     return res.status(500).json({ error: "Stripe is not configured yet." });
+  }
+
+  const role = String(req.body?.role || "player").trim().toLowerCase();
+  if (role === "coach") {
+    const coachId = String(req.body?.coachId || "").trim();
+    if (!coachId) {
+      return res.status(400).json({ error: "Coach id is required." });
+    }
+    const coach = db.prepare("SELECT id, stripe_account_id FROM coaches WHERE id=?").get(coachId);
+    if (!coach) {
+      return res.status(404).json({ error: "Coach not found." });
+    }
+    const stripeAccountId = String(coach.stripe_account_id || "").trim();
+    if (!stripeAccountId) {
+      return res.status(400).json({ error: "Stripe is not connected for this coach yet." });
+    }
+    try {
+      const loginLink = await stripe.accounts.createLoginLink(stripeAccountId);
+      return res.json({ url: loginLink.url });
+    } catch (error) {
+      return res.status(500).json({ error: error?.message || "Could not open Stripe dashboard." });
+    }
   }
 
   const playerId = String(req.body?.playerId || "").trim();
@@ -964,19 +1335,21 @@ async function createCheckoutSessionHandler(req, res) {
     amount,
     coverFees,
     playerId,
+    teamId,
+    sourcePage,
     publicPlayerId,
     donationType,
     equipmentItemId,
+    teamEquipmentName,
     donorName,
     donorEmail,
     donorMessage,
     anonymous
   } = req.body || {};
 
-  const stripeAccountId = String(stripeAccountIdRaw || "").trim();
   const baseAmount = Number(amount || 0);
-  if (!stripeAccountId || !Number.isFinite(baseAmount) || baseAmount <= 0) {
-    return res.status(400).json({ error: "stripe_account_id and a valid amount are required." });
+  if (!Number.isFinite(baseAmount) || baseAmount <= 0) {
+    return res.status(400).json({ error: "A valid amount is required." });
   }
 
   const cover = Boolean(coverFees);
@@ -989,7 +1362,37 @@ async function createCheckoutSessionHandler(req, res) {
   }
 
   try {
-    const destinationAccount = await stripe.accounts.retrieve(stripeAccountId);
+    const returnToTeam = String(sourcePage || "").trim().toLowerCase() === "team";
+    let payoutRecipientType = "player";
+    let payoutRecipientId = String(playerId || "").trim();
+    let resolvedTeamId = String(teamId || "").trim();
+    let resolvedStripeAccountId = String(stripeAccountIdRaw || "").trim();
+
+    if (String(donationType || "").trim().toLowerCase() === "team-general") {
+      const team = db.prepare("SELECT * FROM teams WHERE id=?").get(resolvedTeamId);
+      if (!team) {
+        return res.status(404).json({ error: "Team not found." });
+      }
+      const coach = db.prepare("SELECT id, stripe_account_id FROM coaches WHERE id=?").get(team.coach_id);
+      payoutRecipientType = "coach";
+      payoutRecipientId = String(coach?.id || "");
+      resolvedStripeAccountId = String(coach?.stripe_account_id || "");
+    } else {
+      const payoutContext = payoutContextForPlayer(String(playerId || "").trim());
+      if (!payoutContext) {
+        return res.status(404).json({ error: "Player donation target not found." });
+      }
+      payoutRecipientType = payoutContext.recipientType;
+      payoutRecipientId = payoutContext.recipientId;
+      resolvedTeamId = payoutContext.teamId;
+      resolvedStripeAccountId = payoutContext.stripeAccountId;
+    }
+
+    if (!resolvedStripeAccountId) {
+      return res.status(400).json({ error: "This recipient has not connected Stripe yet." });
+    }
+
+    const destinationAccount = await stripe.accounts.retrieve(resolvedStripeAccountId);
     const transfersCapability = String(destinationAccount.capabilities?.transfers || "");
     const cardPaymentsCapability = String(destinationAccount.capabilities?.card_payments || "");
     if (transfersCapability !== "active") {
@@ -1020,25 +1423,27 @@ async function createCheckoutSessionHandler(req, res) {
           }
         }
       ],
-      success_url: `${appBaseUrl}/player-profile.html?playerId=${encodeURIComponent(
-        publicPlayerId || ""
-      )}&checkout=success`,
-      cancel_url: `${appBaseUrl}/player-profile.html?playerId=${encodeURIComponent(
-        publicPlayerId || ""
-      )}&checkout=cancelled`,
+      success_url: returnToTeam
+        ? `${appBaseUrl}/team-profile.html?teamId=${encodeURIComponent(resolvedTeamId)}&checkout=success`
+        : `${appBaseUrl}/player-profile.html?playerId=${encodeURIComponent(publicPlayerId || "")}&checkout=success`,
+      cancel_url: returnToTeam
+        ? `${appBaseUrl}/team-profile.html?teamId=${encodeURIComponent(resolvedTeamId)}&checkout=cancelled`
+        : `${appBaseUrl}/player-profile.html?playerId=${encodeURIComponent(publicPlayerId || "")}&checkout=cancelled`,
       customer_email: donorEmail ? normalizeEmail(donorEmail) : undefined,
       payment_intent_data: {
-        on_behalf_of: stripeAccountId,
+        on_behalf_of: resolvedStripeAccountId,
         transfer_data: {
-          destination: stripeAccountId,
+          destination: resolvedStripeAccountId,
           amount: split.playerAmountCents
         }
       },
       metadata: {
         playerId: String(playerId || ""),
+        teamId: resolvedTeamId,
         publicPlayerId: String(publicPlayerId || ""),
         donationType: String(donationType || "equipment"),
         equipmentItemId: String(equipmentItemId || ""),
+        teamEquipmentName: String(teamEquipmentName || "").slice(0, 120),
         donorName: String(donorName || "").slice(0, 200),
         donorEmail: normalizeEmail(donorEmail || ""),
         donorMessage: String(donorMessage || "").slice(0, 400),
@@ -1047,6 +1452,9 @@ async function createCheckoutSessionHandler(req, res) {
         playerAmount: String(split.playerAmountCents),
         stripeFeeAmount: String(split.stripeFeeCents),
         applicationFeeAmount: String(split.applicationFeeCents),
+        payoutRecipientType,
+        payoutRecipientId,
+        stripeDestinationAccountId: resolvedStripeAccountId,
         coverFees: cover ? "true" : "false"
       }
     });
@@ -1123,22 +1531,36 @@ app.post("/stripe/webhook", (req, res) => {
 
         const metadata = session.metadata || {};
         const playerId = String(metadata.playerId || "").trim();
+        const teamId = String(metadata.teamId || "").trim();
         const donationType = String(metadata.donationType || "equipment").trim().toLowerCase();
         const donorEmail = normalizeEmail(metadata.donorEmail || session.customer_details?.email || "");
         const donorName = String(metadata.donorName || session.customer_details?.name || "Supporter").trim();
         const donorMessage = String(metadata.donorMessage || "").trim();
-        const equipmentItemId = String(metadata.equipmentItemId || "").trim();
+        let equipmentItemId = String(metadata.equipmentItemId || "").trim();
+        const teamEquipmentName = String(metadata.teamEquipmentName || "").trim();
         const anonymous = String(metadata.anonymous || "") === "true";
         const athleteAmount = Number(metadata.playerAmount || metadata.baseAmount || 0) / 100;
         const checkoutTotalAmount = Number(session.amount_total || 0) / 100;
         const applicationFeeAmount = Number(metadata.applicationFeeAmount || 0) / 100;
+        const payoutRecipientType = String(metadata.payoutRecipientType || "player").trim().toLowerCase();
+        const payoutRecipientId = String(metadata.payoutRecipientId || "").trim();
+        const stripeDestinationAccountId = String(metadata.stripeDestinationAccountId || transferDestination || "").trim();
 
-        if (!playerId || !donorEmail || athleteAmount <= 0) {
+        if ((!playerId && donationType !== "team-general") || !donorEmail || athleteAmount <= 0) {
           throw new Error("Stripe checkout metadata is incomplete.");
+        }
+        if (!equipmentItemId && donationType === "equipment" && playerId && teamEquipmentName) {
+          const matchedEquipment = db
+            .prepare(
+              "SELECT id FROM equipment_items WHERE player_id=? AND lower(name)=lower(?) AND enabled=1 ORDER BY rowid ASC LIMIT 1"
+            )
+            .get(playerId, teamEquipmentName);
+          equipmentItemId = String(matchedEquipment?.id || "");
         }
 
         const donationResult = applyDonationToDatabase({
           playerId,
+          teamId,
           donationType,
           equipmentItemId,
           donorName,
@@ -1146,6 +1568,9 @@ app.post("/stripe/webhook", (req, res) => {
           donorMessage,
           anonymous,
           amount: athleteAmount,
+          payoutRecipientType,
+          payoutRecipientId,
+          stripeDestinationAccountId,
           stripeCheckoutSessionId: sessionId,
           stripePaymentIntentId: paymentIntentId,
           stripeChargeId: String(latestCharge?.id || ""),
@@ -1233,10 +1658,11 @@ app.get("/api/health/email", async (_req, res) => {
 });
 
 app.post("/api/coaches/signup", async (req, res) => {
-  const { name, email, password, teamName } = req.body || {};
+  const { name, email, password, teamName, recipientMode } = req.body || {};
   let safeName;
   let safeEmail;
   let safeTeamName;
+  const payoutMode = String(recipientMode || "coach").trim().toLowerCase() === "player" ? "player" : "coach";
   try {
     safeName = assertSafeName(name, "Name");
     safeEmail = assertValidEmail(email);
@@ -1264,14 +1690,18 @@ app.post("/api/coaches/signup", async (req, res) => {
       passwordHash(String(password)),
       key
     );
-    db.prepare("INSERT INTO teams (id, coach_id, name, location, sport) VALUES (?, ?, ?, '', '')").run(
+    db.prepare("INSERT INTO teams (id, coach_id, name, location, sport, recipient_mode) VALUES (?, ?, ?, '', '', ?)").run(
       teamId,
       coachId,
-      teamNameValue
+      teamNameValue,
+      payoutMode
     );
     db.prepare("UPDATE coaches SET team_name=? WHERE id=?").run(teamNameValue, coachId);
   });
   tx();
+  if (payoutMode === "coach") {
+    ensureTeamSharedEquipmentTemplates({ id: teamId, sport: "football" });
+  }
   let welcomeEmailSent = false;
   let welcomeEmailError = "";
   try {
@@ -1313,9 +1743,15 @@ app.post("/api/coaches/signin", (req, res) => {
 
 app.get("/api/coaches/:coachId/dashboard", (req, res) => {
   const { coachId } = req.params;
-  const coach = db.prepare("SELECT id, name, email FROM coaches WHERE id = ?").get(coachId);
+  const coach = db
+    .prepare("SELECT id, name, email, stripe_account_id, stripe_onboarding_complete FROM coaches WHERE id = ?")
+    .get(coachId);
   if (!coach) return res.status(404).json({ error: "Coach not found." });
   const team = teamByCoachId(coachId);
+  if (String(team?.recipient_mode || "coach") === "coach") {
+    ensureTeamSharedEquipmentTemplates(team);
+    syncTeamSharedEquipmentToPlayers(team.id);
+  }
   const players = db
     .prepare(
       `SELECT id, first_name, last_name, email, player_public_id, registered, published
@@ -1332,17 +1768,44 @@ app.get("/api/coaches/:coachId/dashboard", (req, res) => {
         percentRaised: pct
       };
     });
-  return res.json({ coach, team, players });
+  const teamEquipment =
+    String(team?.recipient_mode || "coach") === "coach" ? teamEquipmentTemplateRows(team.id) : [];
+  const transactions =
+    String(team?.recipient_mode || "coach") === "coach"
+      ? db
+          .prepare(
+            `SELECT
+              d.id,
+              d.amount,
+              d.checkout_total_amount,
+              d.application_fee_amount,
+              d.created_at,
+              p.first_name,
+              p.last_name,
+              COALESCE(e.name, 'General Donation') AS equipment_name
+             FROM donations d
+             JOIN players p ON p.id = d.player_id
+             LEFT JOIN equipment_items e ON e.id = d.equipment_item_id
+             WHERE d.team_id = ?
+             ORDER BY d.created_at DESC
+             LIMIT 200`
+          )
+          .all(team.id)
+      : [];
+  return res.json({ coach, team, players, teamEquipment, transactions });
 });
 
 app.patch("/api/teams/:teamId", (req, res) => {
   const { teamId } = req.params;
-  const { name, location, sport } = req.body || {};
+  const { name, location, sport, recipientMode } = req.body || {};
   const team = db.prepare("SELECT * FROM teams WHERE id = ?").get(teamId);
   if (!team) return res.status(404).json({ error: "Team not found." });
   let nextSport;
   let nextName;
   let nextLocation;
+  const nextRecipientMode = String(recipientMode || team.recipient_mode || "coach").trim().toLowerCase() === "player"
+    ? "player"
+    : "coach";
   try {
     nextSport = sanitizeSingleLineText(sport ?? team.sport ?? "").toLowerCase();
     nextName = assertSafeName(name || team.name, "Team Name");
@@ -1353,15 +1816,56 @@ app.patch("/api/teams/:teamId", (req, res) => {
   } catch (error) {
     return res.status(400).json({ error: error.message || "Invalid team profile data." });
   }
-  db.prepare("UPDATE teams SET name=?, location=?, sport=? WHERE id=?").run(
+  db.prepare("UPDATE teams SET name=?, location=?, sport=?, recipient_mode=? WHERE id=?").run(
     nextName,
     nextLocation,
     nextSport,
+    nextRecipientMode,
     teamId
   );
   db.prepare("UPDATE coaches SET team_name=? WHERE id=?").run(nextName, team.coach_id);
   db.prepare("UPDATE players SET team_name=? WHERE team_id=?").run(nextName, teamId);
+  if (nextRecipientMode === "coach") {
+    ensureTeamSharedEquipmentTemplates({ id: teamId, sport: nextSport || "football" });
+    syncTeamSharedEquipmentToPlayers(teamId);
+  }
   return res.json({ ok: true });
+});
+
+app.put("/api/teams/:teamId/shared-equipment", (req, res) => {
+  const { teamId } = req.params;
+  const team = db.prepare("SELECT * FROM teams WHERE id=?").get(teamId);
+  if (!team) return res.status(404).json({ error: "Team not found." });
+  const items = Array.isArray(req.body?.items) ? req.body.items : null;
+  if (!items) return res.status(400).json({ error: "Shared equipment items are required." });
+
+  const tx = db.transaction(() => {
+    db.prepare("DELETE FROM team_equipment_templates WHERE team_id=?").run(teamId);
+    items.forEach((item, index) => {
+      db.prepare(
+        `INSERT INTO team_equipment_templates
+        (id, team_id, name, category, price_range, goal, enabled, sort_order)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        item.id || uid("teq"),
+        teamId,
+        assertSafeName(item.name || "Equipment", "Equipment Name", 80),
+        assertSafeOptionalText(item.category || "General", "Equipment Category", 60) || "General",
+        assertSafeOptionalText(item.price_range || item.priceRange || "", "Typical Price Range", 80),
+        Number(item.goal || 0),
+        item.enabled === false ? 0 : 1,
+        index
+      );
+    });
+  });
+
+  try {
+    tx();
+    syncTeamSharedEquipmentToPlayers(teamId);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(400).json({ error: error?.message || "Could not save shared equipment." });
+  }
 });
 
 app.post("/api/players/upsert", async (req, res) => {
@@ -1409,20 +1913,27 @@ app.post("/api/players/upsert", async (req, res) => {
     );
     player = db.prepare("SELECT * FROM players WHERE id=?").get(id);
 
-    equipmentTemplateForSport(team.sport).forEach((row, index) => {
+    const sharedTemplates =
+      String(team.recipient_mode || "coach") === "coach"
+        ? ensureTeamSharedEquipmentTemplates(team)
+        : [];
+    const sourceRows = sharedTemplates.length
+      ? sharedTemplates.map((row) => [row.name, row.category, row.price_range, row.goal, row.enabled, row.sort_order])
+      : equipmentTemplateForSport(team.sport).map((row, index) => [row[0], row[1], row[2], 0, 1, index]);
+    sourceRows.forEach((row, index) => {
       if (hasEquipmentSortOrder) {
         db.prepare(
           `INSERT INTO equipment_items
           (id, player_id, name, category, price_range, goal, raised, enabled, sort_order)
-          VALUES (?, ?, ?, ?, ?, 0, 0, 1, ?)`
-        ).run(uid("eq"), id, row[0], row[1], row[2], index);
+          VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)`
+        ).run(uid("eq"), id, row[0], row[1], row[2], Number(row[3] || 0), Number(row[4]) === 0 ? 0 : 1, Number(row[5] ?? index));
         return;
       }
       db.prepare(
         `INSERT INTO equipment_items
         (id, player_id, name, category, price_range, goal, raised, enabled)
-        VALUES (?, ?, ?, ?, ?, 0, 0, 1)`
-      ).run(uid("eq"), id, row[0], row[1], row[2]);
+        VALUES (?, ?, ?, ?, ?, ?, 0, ?)`
+      ).run(uid("eq"), id, row[0], row[1], row[2], Number(row[3] || 0), Number(row[4]) === 0 ? 0 : 1);
     });
   } else {
     db.prepare("UPDATE players SET first_name=?, last_name=?, team_name=? WHERE id=?").run(
@@ -1439,7 +1950,8 @@ app.post("/api/players/upsert", async (req, res) => {
         to: normalizeEmail(email),
         teamName: team.name,
         coachName: coach?.name || "Your coach",
-        playerPublicId: player.player_public_id
+        playerPublicId: player.player_public_id,
+        recipientMode: team.recipient_mode || "coach"
       });
       inviteSent = Boolean(delivery?.sent);
       inviteError = delivery?.reason ? String(delivery.reason) : "";
@@ -1660,6 +2172,7 @@ app.get("/api/players/:playerId/dashboard", (req, res) => {
   const player = db.prepare("SELECT * FROM players WHERE id = ?").get(req.params.playerId);
   if (!player) return res.status(404).json({ error: "Player not found." });
   const team = db.prepare("SELECT * FROM teams WHERE id=?").get(player.team_id);
+  const coach = team ? db.prepare("SELECT id, name, stripe_account_id, stripe_onboarding_complete FROM coaches WHERE id=?").get(team.coach_id) : null;
   const equipment = equipmentRows(player.id, true);
   const totals = playerTotals(player.id);
   return res.json({
@@ -1667,6 +2180,10 @@ app.get("/api/players/:playerId/dashboard", (req, res) => {
       ...player,
       teamName: team?.name || "",
       teamSport: team?.sport || "",
+      teamRecipientMode: team?.recipient_mode || "coach",
+      coachName: coach?.name || "",
+      coachStripeAccountId: String(coach?.stripe_account_id || ""),
+      coachStripeOnboardingComplete: Number(coach?.stripe_onboarding_complete || 0),
       goalTotal: totals.goal_total,
       raisedTotal: totals.raised_total,
       equipment
@@ -1679,9 +2196,13 @@ app.put("/api/players/:playerId/dashboard", (req, res) => {
   const { imageDataUrl, published, equipment } = req.body || {};
   const player = db.prepare("SELECT * FROM players WHERE id=?").get(playerId);
   if (!player) return res.status(404).json({ error: "Player not found." });
+  const team = db.prepare("SELECT * FROM teams WHERE id=?").get(player.team_id);
 
   let sanitizedEquipment = null;
   try {
+    if (String(team?.recipient_mode || "coach") === "coach" && Array.isArray(equipment)) {
+      throw new Error("Coach-managed teams set equipment pricing from the manager dashboard.");
+    }
     if (Array.isArray(equipment)) {
       sanitizedEquipment = equipment.map((item) => ({
         id: String(item?.id || "").trim(),
@@ -1795,9 +2316,17 @@ app.get("/api/public/teams", (_req, res) => {
 app.get("/api/public/players/:publicId", (req, res) => {
   const player = db
     .prepare(
-      `SELECT p.*, t.name AS team_name, t.sport AS team_sport
+      `SELECT
+        p.*,
+        t.name AS team_name,
+        t.sport AS team_sport,
+        t.recipient_mode,
+        c.id AS coach_id,
+        c.name AS coach_name,
+        c.stripe_account_id AS coach_stripe_account_id
        FROM players p
        JOIN teams t ON t.id = p.team_id
+       JOIN coaches c ON c.id = t.coach_id
        WHERE lower(player_public_id) = lower(?)`
     )
     .get(String(req.params.publicId || ""));
@@ -1807,6 +2336,12 @@ app.get("/api/public/players/:publicId", (req, res) => {
   return res.json({
     player: {
       ...player,
+      recipient_mode: player.recipient_mode || "coach",
+      coach_name: player.coach_name || "",
+      stripe_account_id:
+        String(player.recipient_mode || "coach") === "coach"
+          ? String(player.coach_stripe_account_id || "")
+          : String(player.stripe_account_id || ""),
       equipment,
       goalTotal: totals.goal_total,
       raisedTotal: totals.raised_total
@@ -1817,6 +2352,11 @@ app.get("/api/public/players/:publicId", (req, res) => {
 app.get("/api/public/teams/:teamId", (req, res) => {
   const team = db.prepare("SELECT * FROM teams WHERE id=?").get(req.params.teamId);
   if (!team) return res.status(404).json({ error: "Team not found." });
+  const coach = db.prepare("SELECT id, name, stripe_account_id FROM coaches WHERE id=?").get(team.coach_id);
+  if (String(team.recipient_mode || "coach") === "coach") {
+    ensureTeamSharedEquipmentTemplates(team);
+    syncTeamSharedEquipmentToPlayers(team.id);
+  }
   const players = db
     .prepare("SELECT id, first_name, last_name, player_public_id FROM players WHERE team_id=?")
     .all(team.id)
@@ -1824,7 +2364,16 @@ app.get("/api/public/teams/:teamId", (req, res) => {
       const totals = playerTotals(p.id);
       return { ...p, goalTotal: totals.goal_total, raisedTotal: totals.raised_total };
     });
-  return res.json({ team, players });
+  const teamEquipment =
+    String(team.recipient_mode || "coach") === "coach"
+      ? teamEquipmentTemplateRows(team.id)
+      : [];
+  const totalTeamGoal =
+    String(team.recipient_mode || "coach") === "coach"
+      ? teamEquipment.reduce((sum, item) => sum + Number(item.goal || 0), 0) * players.length
+      : players.reduce((sum, item) => sum + Number(item.goalTotal || 0), 0);
+  const totalTeamRaised = players.reduce((sum, item) => sum + Number(item.raisedTotal || 0), 0);
+  return res.json({ team: { ...team, coach_name: coach?.name || "", stripe_account_id: String(coach?.stripe_account_id || "") }, players, teamEquipment, totalTeamGoal, totalTeamRaised });
 });
 
 app.post("/api/donations", (req, res) => {

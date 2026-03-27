@@ -40,6 +40,15 @@
     <main class="dashboard-main">
       <section class="card donor-hero" id="team-top"></section>
 
+      <section class="card section-top-gap" id="team-donate-card" hidden>
+        <h2 class="section-title">Team Fundraising</h2>
+        <p class="subtle-copy" id="team-donate-copy">
+          Donate to a shared team equipment item, then choose which player you are supporting.
+        </p>
+        <div id="team-general-donation-card" class="equipment-grid section-top-gap-sm"></div>
+        <div id="team-equipment-grid" class="equipment-grid section-top-gap-sm"></div>
+      </section>
+
       <section class="card section-top-gap">
         <h2 class="section-title">Roster</h2>
         <div class="table-wrap">
@@ -60,9 +69,59 @@
       </section>
     </main>
 
+    <div class="modal-backdrop" id="team-donor-modal-backdrop" hidden>
+      <section class="modal" id="team-donation-modal" role="dialog" aria-modal="true" aria-labelledby="team-donation-title" hidden>
+        <div class="modal-header">
+          <h2 id="team-donation-title">Team Donation</h2>
+          <button class="icon-btn" type="button" aria-label="Close modal" data-team-donor-close>&times;</button>
+        </div>
+        <form id="team-donation-form" class="stack-form donation-form section-top-gap-sm">
+          <p class="subtle-copy" id="team-selected-copy"></p>
+          <label id="team-player-select-wrap">
+            Donate on behalf of
+            <select name="playerId" id="team-player-select"></select>
+          </label>
+          <div class="donation-top-row">
+            <label>
+              Donation Amount ($)
+              <input type="number" min="1" step="1" name="amount" required />
+            </label>
+            <button class="btn btn-money-soft" type="button" id="team-fill-remaining">Donate Remaining</button>
+          </div>
+          <div class="donation-donor-grid">
+            <label>
+              Your Name
+              <input type="text" name="donorName" required />
+            </label>
+            <label>
+              Your Email
+              <input type="email" name="donorEmail" required />
+            </label>
+          </div>
+          <label>
+            Message (Optional)
+            <textarea name="donorMessage" rows="3"></textarea>
+          </label>
+          <label class="toggle-label donation-fee-toggle">
+            <input type="checkbox" name="coverFees" id="team-cover-fees-checkbox" checked />
+            Cover credit card fees so the athlete receives the full donation amount.
+          </label>
+          <p class="subtle-copy donation-fee-note" id="team-cover-fees-copy"></p>
+          <div class="donation-footer">
+            <label class="toggle-label">
+              <input type="checkbox" name="anonymous" />
+              Donate anonymously
+            </label>
+            <button class="btn btn-money" type="submit" id="team-confirm-donation-button">Donate</button>
+          </div>
+        </form>
+      </section>
+    </div>
+
     <script src="./data.js"></script>
     <script src="./action-modal.js"></script>
     <script src="./header-session.js"></script>
+    <script src="https://js.stripe.com/v3"></script>
     <script src="./team-profile.js"></script>
   </body>
 </html>
