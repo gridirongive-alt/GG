@@ -171,6 +171,72 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function hasControlChars(value) {
+  return /[\u0000-\u001f\u007f]/u.test(String(value || ""));
+}
+
+function sanitizeSingleLineText(value) {
+  return String(value || "").replace(/[\u0000-\u001f\u007f]/gu, "").trim();
+}
+
+function assertNoControlChars(value, fieldName) {
+  if (hasControlChars(value)) {
+    throw new Error(`${fieldName} contains invalid characters.`);
+  }
+}
+
+function assertValidEmail(email) {
+  const normalized = normalizeEmail(email);
+  if (!normalized) throw new Error("Email is required.");
+  if (normalized.length > 254) throw new Error("Email is too long.");
+  assertNoControlChars(normalized, "Email");
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized)) {
+    throw new Error("Email format is invalid.");
+  }
+  return normalized;
+}
+
+function assertValidPlayerPublicId(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!/^GG-[A-Z0-9]{3}-[A-Z0-9]{4}$/u.test(normalized)) {
+    throw new Error("PlayerID format is invalid.");
+  }
+  return normalized;
+}
+
+function assertValidRecoveryKey(value) {
+  const normalized = String(value || "").trim();
+  if (!/^[a-f0-9]{48}$/u.test(normalized)) {
+    throw new Error("Recovery Key format is invalid.");
+  }
+  return normalized;
+}
+
+function assertAllowedLength(value, maxLength, fieldName) {
+  if (String(value || "").length > maxLength) {
+    throw new Error(`${fieldName} is too long.`);
+  }
+}
+
+function assertSafeName(value, fieldName, maxLength = 120) {
+  const normalized = sanitizeSingleLineText(value);
+  if (!normalized) throw new Error(`${fieldName} is required.`);
+  assertAllowedLength(normalized, maxLength, fieldName);
+  return normalized;
+}
+
+function assertSafeOptionalText(value, fieldName, maxLength = 200) {
+  const normalized = sanitizeSingleLineText(value);
+  assertAllowedLength(normalized, maxLength, fieldName);
+  return normalized;
+}
+
+function assertSafeMessage(value, fieldName, maxLength = 1000) {
+  const normalized = String(value || "").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/gu, "").trim();
+  assertAllowedLength(normalized, maxLength, fieldName);
+  return normalized;
+}
+
 function comparePassword(input, stored) {
   const candidate = String(input || "");
   const hashed = String(stored || "");
@@ -406,6 +472,10 @@ function applyDonationToDatabase({
     throw new Error("Missing required donation fields.");
   }
 
+  const safeDonorName = assertSafeName(donorName, "Donor name", 120);
+  const safeDonorEmail = assertValidEmail(donorEmail);
+  const safeDonorMessage = assertSafeMessage(donorMessage || "", "Donor message", 1000);
+
   const value = Number(amount);
   if (value <= 0) {
     throw new Error("Amount must be greater than zero.");
@@ -452,9 +522,9 @@ function applyDonationToDatabase({
           donationId,
           playerId,
           item.id,
-          String(donorName).trim(),
-          normalizeEmail(donorEmail),
-          String(donorMessage || ""),
+          safeDonorName,
+          safeDonorEmail,
+          safeDonorMessage,
           anonymous ? 1 : 0,
           applied,
           String(stripeCheckoutSessionId || ""),
@@ -503,9 +573,9 @@ function applyDonationToDatabase({
       donationId,
       playerId,
       equipmentItemId,
-      String(donorName).trim(),
-      normalizeEmail(donorEmail),
-      String(donorMessage || ""),
+      safeDonorName,
+      safeDonorEmail,
+      safeDonorMessage,
       anonymous ? 1 : 0,
       value,
       String(stripeCheckoutSessionId || ""),
@@ -1097,23 +1167,33 @@ app.get("/api/health/email", async (_req, res) => {
 
 app.post("/api/coaches/signup", async (req, res) => {
   const { name, email, password, teamName } = req.body || {};
-  if (!name || !email || !password || !teamName) {
-    return res.status(400).json({ error: "Missing required fields." });
+  let safeName;
+  let safeEmail;
+  let safeTeamName;
+  try {
+    safeName = assertSafeName(name, "Name");
+    safeEmail = assertValidEmail(email);
+    safeTeamName = assertSafeName(teamName, "Team Name");
+    if (!String(password || "").trim()) {
+      throw new Error("Password is required.");
+    }
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Missing required fields." });
   }
   const exists = db
     .prepare("SELECT id FROM coaches WHERE lower(email) = lower(?)")
-    .get(String(email));
+    .get(safeEmail);
   if (exists) return res.status(409).json({ error: "Coach email already exists." });
 
   const coachId = uid("coach");
   const teamId = uid("team");
   const key = recoveryKey();
-  const teamNameValue = String(teamName).trim();
+  const teamNameValue = safeTeamName;
   const tx = db.transaction(() => {
     db.prepare('INSERT INTO coaches (id, name, email, password, "PW_Recovery_Key") VALUES (?, ?, ?, ?, ?)').run(
       coachId,
-      String(name).trim(),
-      String(email).trim(),
+      safeName,
+      safeEmail,
       passwordHash(String(password)),
       key
     );
@@ -1129,8 +1209,8 @@ app.post("/api/coaches/signup", async (req, res) => {
   let welcomeEmailError = "";
   try {
     const delivery = await sendCoachWelcomeEmail({
-      to: normalizeEmail(email),
-      coachName: String(name).trim(),
+      to: safeEmail,
+      coachName: safeName,
       teamName: teamNameValue
     });
     welcomeEmailSent = Boolean(delivery?.sent);
@@ -1146,9 +1226,15 @@ app.post("/api/coaches/signup", async (req, res) => {
 
 app.post("/api/coaches/signin", (req, res) => {
   const { email, password } = req.body || {};
+  let safeEmail;
+  try {
+    safeEmail = assertValidEmail(email);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Email format is invalid." });
+  }
   const coach = db
     .prepare("SELECT id, password FROM coaches WHERE lower(email)=lower(?)")
-    .get(String(email || ""));
+    .get(safeEmail);
   if (!coach || !comparePassword(password, coach.password)) {
     return res.status(401).json({ error: "Invalid credentials." });
   }
@@ -1187,11 +1273,22 @@ app.patch("/api/teams/:teamId", (req, res) => {
   const { name, location, sport } = req.body || {};
   const team = db.prepare("SELECT * FROM teams WHERE id = ?").get(teamId);
   if (!team) return res.status(404).json({ error: "Team not found." });
-  const nextSport = String(sport ?? team.sport ?? "").trim().toLowerCase();
-  const nextName = String(name || team.name).trim();
+  let nextSport;
+  let nextName;
+  let nextLocation;
+  try {
+    nextSport = sanitizeSingleLineText(sport ?? team.sport ?? "").toLowerCase();
+    nextName = assertSafeName(name || team.name, "Team Name");
+    nextLocation = assertSafeOptionalText(location || "", "Team Location", 120);
+    if (nextSport && !["football", "hockey", "lacrosse", "baseball"].includes(nextSport)) {
+      throw new Error("Sport selection is invalid.");
+    }
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Invalid team profile data." });
+  }
   db.prepare("UPDATE teams SET name=?, location=?, sport=? WHERE id=?").run(
     nextName,
-    String(location || "").trim(),
+    nextLocation,
     nextSport,
     teamId
   );
@@ -1202,12 +1299,19 @@ app.patch("/api/teams/:teamId", (req, res) => {
 
 app.post("/api/players/upsert", async (req, res) => {
   const { teamId, firstName, lastName, email } = req.body || {};
-  if (!teamId || !firstName || !lastName || !email) {
-    return res.status(400).json({ error: "Missing required fields." });
+  let safeFirstName;
+  let safeLastName;
+  let safeEmail;
+  try {
+    safeFirstName = assertSafeName(firstName, "First Name", 80);
+    safeLastName = assertSafeName(lastName, "Last Name", 80);
+    safeEmail = assertValidEmail(email);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Missing required fields." });
   }
   const team = db.prepare("SELECT * FROM teams WHERE id = ?").get(teamId);
   if (!team) return res.status(404).json({ error: "Team not found." });
-  const normalized = normalizeEmail(email);
+  const normalized = safeEmail;
   let player = db
     .prepare("SELECT * FROM players WHERE team_id=? AND lower(email)=lower(?)")
     .get(teamId, normalized);
@@ -1229,8 +1333,8 @@ app.post("/api/players/upsert", async (req, res) => {
     ).run(
       id,
       teamId,
-      String(firstName).trim(),
-      String(lastName).trim(),
+      safeFirstName,
+      safeLastName,
       normalized,
       team.name,
       publicId,
@@ -1255,8 +1359,8 @@ app.post("/api/players/upsert", async (req, res) => {
     });
   } else {
     db.prepare("UPDATE players SET first_name=?, last_name=?, team_name=? WHERE id=?").run(
-      String(firstName).trim(),
-      String(lastName).trim(),
+      safeFirstName,
+      safeLastName,
       team.name,
       player.id
     );
@@ -1295,8 +1399,14 @@ app.delete("/api/players/:playerId", (req, res) => {
 
 app.post("/api/players/signup", (req, res) => {
   const { playerPublicId: publicId, password } = req.body || {};
-  if (!publicId || !password) return res.status(400).json({ error: "Missing required fields." });
-  const player = db.prepare("SELECT * FROM players WHERE lower(player_public_id)=lower(?)").get(String(publicId));
+  let safePublicId;
+  try {
+    safePublicId = assertValidPlayerPublicId(publicId);
+    if (!String(password || "").trim()) throw new Error("Password is required.");
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Missing required fields." });
+  }
+  const player = db.prepare("SELECT * FROM players WHERE lower(player_public_id)=lower(?)").get(safePublicId);
   if (!player) return res.status(404).json({ error: "PlayerID not found." });
   db.prepare("UPDATE players SET password=?, registered=1 WHERE id=?").run(
     passwordHash(String(password)),
@@ -1307,9 +1417,15 @@ app.post("/api/players/signup", (req, res) => {
 
 app.post("/api/players/signin", (req, res) => {
   const { email, password } = req.body || {};
+  let safeEmail;
+  try {
+    safeEmail = assertValidEmail(email);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Email format is invalid." });
+  }
   const player = db
     .prepare("SELECT id, password, registered FROM players WHERE lower(email)=lower(?)")
-    .get(String(email || ""));
+    .get(safeEmail);
   if (player && Number(player.registered) === 0) {
     return res.status(403).json({
       error: "Account not activated yet. Use Player Sign Up with your PlayerID first."
@@ -1326,8 +1442,12 @@ app.post("/api/players/signin", (req, res) => {
 
 app.post("/api/auth/forgot-password", async (req, res) => {
   const { email } = req.body || {};
-  const normalized = normalizeEmail(email);
-  if (!normalized) return res.status(400).json({ error: "Email is required." });
+  let normalized;
+  try {
+    normalized = assertValidEmail(email);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Email is required." });
+  }
 
   const coach = db
     .prepare('SELECT id, email, "PW_Recovery_Key" AS recovery_key FROM coaches WHERE lower(email)=lower(?)')
@@ -1364,9 +1484,16 @@ app.post("/api/auth/forgot-password", async (req, res) => {
 
 app.post("/api/contact", async (req, res) => {
   const { name, email, message } = req.body || {};
-  const senderName = String(name || "").trim();
-  const senderEmail = normalizeEmail(email);
-  const messageContent = String(message || "").trim();
+  let senderName;
+  let senderEmail;
+  let messageContent;
+  try {
+    senderName = assertSafeName(name, "Name", 120);
+    senderEmail = assertValidEmail(email);
+    messageContent = assertSafeMessage(message, "Message", 4000);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Name, email, and message are required." });
+  }
 
   if (!senderName || !senderEmail || !messageContent) {
     return res.status(400).json({ error: "Name, email, and message are required." });
@@ -1395,13 +1522,20 @@ app.post("/api/contact", async (req, res) => {
 app.post("/api/auth/verify-recovery", (req, res) => {
   const { email, recoveryKey: key, role } = req.body || {};
   if (!email || !key) return res.status(400).json({ error: "Email and Recovery Key are required." });
-  const normalized = normalizeEmail(email);
+  let normalized;
+  let safeKey;
+  try {
+    normalized = assertValidEmail(email);
+    safeKey = assertValidRecoveryKey(key);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Invalid recovery details." });
+  }
   const tableName = role === "coach" ? "coaches" : role === "player" ? "players" : null;
 
   const lookup = (table) =>
     db
       .prepare(`SELECT id FROM ${table} WHERE lower(email)=lower(?) AND "PW_Recovery_Key"=?`)
-      .get(normalized, String(key));
+      .get(normalized, safeKey);
 
   const matched = tableName ? lookup(tableName) : lookup("coaches") || lookup("players");
   if (!matched) return res.status(401).json({ error: "Invalid recovery details." });
@@ -1413,7 +1547,14 @@ app.post("/api/auth/reset-password", (req, res) => {
   if (!email || !key || !newPassword) {
     return res.status(400).json({ error: "Email, Recovery Key, and new password are required." });
   }
-  const normalized = normalizeEmail(email);
+  let normalized;
+  let safeKey;
+  try {
+    normalized = assertValidEmail(email);
+    safeKey = assertValidRecoveryKey(key);
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Invalid recovery details." });
+  }
   const tables = role === "coach" ? ["coaches"] : role === "player" ? ["players"] : ["coaches", "players"];
   const nextHash = passwordHash(String(newPassword));
   const nextRecovery = generateRecoveryKey();
@@ -1421,7 +1562,7 @@ app.post("/api/auth/reset-password", (req, res) => {
   for (const table of tables) {
     const row = db
       .prepare(`SELECT id FROM ${table} WHERE lower(email)=lower(?) AND "PW_Recovery_Key"=?`)
-      .get(normalized, String(key));
+      .get(normalized, safeKey);
     if (!row) continue;
     db.prepare(`UPDATE ${table} SET password=?, "PW_Recovery_Key"=? WHERE id=?`).run(
       nextHash,
@@ -1435,9 +1576,15 @@ app.post("/api/auth/reset-password", (req, res) => {
 });
 
 app.get("/api/players/lookup/:publicId", (req, res) => {
+  let safePublicId;
+  try {
+    safePublicId = assertValidPlayerPublicId(req.params.publicId || "");
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "PlayerID not found." });
+  }
   const player = db
     .prepare("SELECT id, email, player_public_id, registered FROM players WHERE lower(player_public_id)=lower(?)")
-    .get(String(req.params.publicId || ""));
+    .get(safePublicId);
   if (!player) return res.status(404).json({ error: "PlayerID not found." });
   return res.json(player);
 });
@@ -1466,6 +1613,32 @@ app.put("/api/players/:playerId/dashboard", (req, res) => {
   const player = db.prepare("SELECT * FROM players WHERE id=?").get(playerId);
   if (!player) return res.status(404).json({ error: "Player not found." });
 
+  let sanitizedEquipment = null;
+  try {
+    if (Array.isArray(equipment)) {
+      sanitizedEquipment = equipment.map((item) => ({
+        id: String(item?.id || "").trim(),
+        name: assertSafeName(item?.name || "Equipment", "Equipment name", 80),
+        category: assertSafeOptionalText(item?.category || "General", "Equipment category", 60) || "General",
+        priceRange: assertSafeOptionalText(item?.price_range || item?.priceRange || "", "Typical price range", 80),
+        goal: Number(item?.goal || 0),
+        raised: Number(item?.raised || 0),
+        enabled: item?.enabled === false ? 0 : 1
+      }));
+      if (sanitizedEquipment.some((item) => !Number.isFinite(item.goal) || item.goal < 0)) {
+        throw new Error("Equipment goal values are invalid.");
+      }
+      if (sanitizedEquipment.some((item) => !Number.isFinite(item.raised) || item.raised < 0)) {
+        throw new Error("Equipment raised values are invalid.");
+      }
+    }
+    if (typeof imageDataUrl === "string") {
+      assertAllowedLength(imageDataUrl, 2_500_000, "Image upload");
+    }
+  } catch (error) {
+    return res.status(400).json({ error: error.message || "Player dashboard update is invalid." });
+  }
+
   const tx = db.transaction(() => {
     if (typeof imageDataUrl === "string") {
       db.prepare("UPDATE players SET image_data_url=? WHERE id=?").run(imageDataUrl, playerId);
@@ -1473,9 +1646,9 @@ app.put("/api/players/:playerId/dashboard", (req, res) => {
     if (typeof published === "boolean") {
       db.prepare("UPDATE players SET published=? WHERE id=?").run(published ? 1 : 0, playerId);
     }
-    if (Array.isArray(equipment)) {
+    if (Array.isArray(sanitizedEquipment)) {
       db.prepare("DELETE FROM equipment_items WHERE player_id=?").run(playerId);
-      equipment.forEach((item, index) => {
+      sanitizedEquipment.forEach((item, index) => {
         if (hasEquipmentSortOrder) {
           db.prepare(
             `INSERT INTO equipment_items
@@ -1484,12 +1657,12 @@ app.put("/api/players/:playerId/dashboard", (req, res) => {
           ).run(
             item.id || uid("eq"),
             playerId,
-            String(item.name || "Equipment"),
-            String(item.category || "General"),
-            String(item.price_range || item.priceRange || ""),
-            Number(item.goal || 0),
-            Number(item.raised || 0),
-            item.enabled === false ? 0 : 1,
+            item.name,
+            item.category,
+            item.priceRange,
+            item.goal,
+            item.raised,
+            item.enabled,
             index
           );
           return;
@@ -1501,12 +1674,12 @@ app.put("/api/players/:playerId/dashboard", (req, res) => {
         ).run(
           item.id || uid("eq"),
           playerId,
-          String(item.name || "Equipment"),
-          String(item.category || "General"),
-          String(item.price_range || item.priceRange || ""),
-          Number(item.goal || 0),
-          Number(item.raised || 0),
-          item.enabled === false ? 0 : 1
+          item.name,
+          item.category,
+          item.priceRange,
+          item.goal,
+          item.raised,
+          item.enabled
         );
       });
     }
